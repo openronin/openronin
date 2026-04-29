@@ -5,28 +5,28 @@
   "description": "Self-hosted AI developer agent that turns issues into merged pull requests. Supervisor + worker architecture, vendor-neutral VCS/tracker integration.",
   "keywords": [
     "ai-agent",
-    "autonomous",
-    "developer-agent",
-    "claude",
-    "self-hosted",
-    "github-bot",
-    "code-review",
     "auto-merge",
-    "mcp"
+    "autonomous",
+    "claude",
+    "code-review",
+    "developer-agent",
+    "github-bot",
+    "mcp",
+    "self-hosted"
   ],
   "homepage": "https://github.com/openronin/openronin",
   "bugs": {
     "url": "https://github.com/openronin/openronin/issues"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/openronin/openronin.git"
   },
-  "license": "MIT",
-  "type": "module",
   "bin": {
     "openronin-mcp": "dist/mcp/index.js"
   },
+  "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
