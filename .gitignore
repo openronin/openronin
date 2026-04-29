@@ -1,0 +1,65 @@
+# Dependencies
+node_modules/
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
+dist/
+*.tsbuildinfo
+coverage/
+
+# Runtime state — should never live in the code tree.
+# Default OPENRONIN_DATA_DIR for local dev. The production location
+# is configured via OPENRONIN_DATA_DIR env var (e.g. /var/lib/openronin).
+.dev-data/
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Secrets — never commit. Use the .env.example template instead.
+.env
+.env.*
+!.env.example
+secrets.env
+secrets/
+*.pem
+*.key
+id_*ed25519*
+id_*rsa*
+id_*dsa*
+id_*ecdsa*
+
+# AI agent / IDE state
+.claude/
+.cursor/
+.aider*
+memory/
+
+# Temporary / scratch
+.tmp_*
+*.log
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Test artifacts
+test-results/
+playwright-report/
+.test-output/
+
+# Project-specific
+prompt-logs/
+reports/
+work/
