@@ -20,4 +20,14 @@ jobs:
           node-version: "22"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Debug oxfmt expected format
+        if: always()
+        run: |
+          cp package.json /tmp/before.json
+          pnpm exec oxfmt --write package.json || true
+          echo "=== DIFF ==="
+          diff -u /tmp/before.json package.json || true
+          echo "=== END DIFF ==="
+          # restore so the rest of the run uses the original
+          cp /tmp/before.json package.json
       - run: pnpm run check
