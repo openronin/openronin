@@ -1,0 +1,10 @@
+[Unit]
+Description=openronin daily rsync backup timer
+Documentation=https://github.com/openronin/openronin
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target

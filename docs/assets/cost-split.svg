@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" role="img" aria-labelledby="title desc" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+  <title id="title">Where the work goes vs where the money goes</title>
+  <desc id="desc">Two stacked bars: the supervisor handles 80% of turns but only 10% of cost; the coder agent handles 20% of turns but 90% of cost.</desc>
+
+  <style>
+    .h1 { font-weight: 700; font-size: 22px; fill: #1f2933; text-anchor: middle; }
+    .h2 { font-weight: 600; font-size: 14px; fill: #1f2933; text-anchor: middle; letter-spacing: 0.08em; }
+    .role-big { font-weight: 700; font-size: 16px; fill: #ffffff; text-anchor: middle; }
+    .role-mid { font-weight: 700; font-size: 13px; fill: #ffffff; text-anchor: middle; }
+    .pct-big { font-weight: 800; font-size: 36px; fill: #ffffff; text-anchor: middle; letter-spacing: -0.02em; }
+    .pct-mid { font-weight: 800; font-size: 20px; fill: #ffffff; text-anchor: middle; letter-spacing: -0.02em; }
+    .axis { font-size: 11px; fill: #6b7280; text-anchor: middle; }
+    .cap { font-size: 13px; fill: #525866; text-anchor: middle; }
+    .leader { font-size: 11px; fill: #1f2933; }
+  </style>
+
+  <rect width="900" height="500" fill="#f7f5ed"/>
+
+  <!-- Title block -->
+  <text x="450" y="48" class="h1">Where the work goes vs. where the money goes</text>
+  <text x="450" y="74" class="cap">A typical week of openronin running against a real repo</text>
+
+  <!-- Column headers -->
+  <text x="200" y="118" class="h2">SHARE OF TURNS</text>
+  <text x="700" y="118" class="h2">SHARE OF SPEND</text>
+
+  <!-- Connecting bands (drawn first, so bars sit on top) -->
+  <!-- Supervisor band: from (250, 130..386) to (550, 130..162) -->
+  <polygon points="250,130 550,130 550,162 250,386" fill="#5b9aa0" fill-opacity="0.16"/>
+  <!-- Coder band: from (250, 386..450) to (550, 162..450) -->
+  <polygon points="250,386 550,162 550,450 250,450" fill="#c97064" fill-opacity="0.16"/>
+
+  <!-- Left bar: turns (supervisor 80%, coder 20%) -->
+  <rect x="150" y="130" width="100" height="256" fill="#5b9aa0" rx="2"/>
+  <rect x="150" y="386" width="100" height="64" fill="#c97064" rx="2"/>
+
+  <!-- Right bar: spend (supervisor 10%, coder 90%) -->
+  <rect x="550" y="130" width="100" height="32" fill="#5b9aa0" rx="2"/>
+  <rect x="550" y="162" width="100" height="288" fill="#c97064" rx="2"/>
+
+  <!-- Left bar labels -->
+  <text x="200" y="248" class="role-big">Supervisor</text>
+  <text x="200" y="282" class="pct-big">80%</text>
+  <text x="200" y="412" class="role-mid">Coder</text>
+  <text x="200" y="436" class="pct-mid">20%</text>
+
+  <!-- Right bar labels: supervisor band is small, label outside via leader -->
+  <line x1="660" y1="146" x2="725" y2="146" stroke="#5b9aa0" stroke-width="1.2"/>
+  <circle cx="725" cy="146" r="2.5" fill="#5b9aa0"/>
+  <text x="732" y="143" class="leader" fill="#1f2933">Supervisor</text>
+  <text x="732" y="158" class="leader" fill="#5b9aa0" font-weight="700">10%</text>
+
+  <text x="600" y="298" class="role-big">Coder</text>
+  <text x="600" y="332" class="pct-big">90%</text>
+
+  <!-- Caption beneath -->
+  <text x="450" y="486" class="cap">The cheap supervisor does most of the talking. The expensive coder fires only when there's actual code to write.</text>
+</svg>

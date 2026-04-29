@@ -1,0 +1,798 @@
+export interface TriageFixture {
+  id: string;
+  item: {
+    number: number;
+    kind: "issue" | "pull_request";
+    title: string;
+    body: string;
+    author: string;
+    authorAssociation: "OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "NONE";
+    labels: string[];
+    createdAt: string;
+    updatedAt: string;
+    url: string;
+  };
+  expected: {
+    decision: "close" | "keep_open";
+    closeReason?:
+      | "implemented_on_main"
+      | "cannot_reproduce"
+      | "duplicate_or_superseded"
+      | "not_actionable_in_repo"
+      | "incoherent"
+      | "stale_insufficient_info";
+  };
+}
+
+export interface AnalyzeFixture {
+  id: string;
+  item: {
+    number: number;
+    title: string;
+    body: string;
+    author: string;
+    authorAssociation: "OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "NONE";
+    labels: string[];
+    existingComments: string;
+  };
+  expected: {
+    state: "ready" | "needs_clarification";
+  };
+}
+
+const BASE_DATE = "2026-01-15T10:00:00Z";
+const STALE_DATE = "2025-09-01T10:00:00Z";
+
+export const triageFixtures: TriageFixture[] = [
+  // --- KEEP OPEN (16) ---
+  {
+    id: "t-001",
+    item: {
+      number: 101,
+      kind: "issue",
+      title: "TypeError: Cannot read property 'length' of undefined in batch processing",
+      body: "## Bug Report\n\nWhen processing an empty array in batch mode, the worker throws:\n```\nTypeError: Cannot read property 'length' of undefined\n    at BatchProcessor.process (src/scheduler/worker.ts:45)\n```\n\n**Version**: 0.0.1\n**Node**: 22.11.0\n\n**Steps to reproduce**:\n1. Send a webhook with an empty `items` array\n2. Observe the error in logs\n\nExpected: graceful handling, no crash.",
+      author: "alice",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["bug"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/101",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-002",
+    item: {
+      number: 102,
+      kind: "issue",
+      title: "Feature: configurable retry timeout for engine calls",
+      body: "Currently engine retry timeout is hardcoded at 500ms. For slow networks this causes unnecessary failures.\n\n**Request**: Add a `retry_timeout_ms` config field per-engine in `config.yaml`.\n\nUse case: on-prem deployments with high latency to MIMO endpoint (3-4s typical RTT).",
+      author: "bob",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/102",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-003",
+    item: {
+      number: 103,
+      kind: "issue",
+      title: "Memory leak: webhook queue keeps growing after bot restart",
+      body: "After restarting the service, old webhook events are re-queued but never drained. RSS grows from 120MB to 800MB over 6 hours.\n\n**Env**: systemd service, Node 22, 8GB RAM server.\n\nTo reproduce:\n1. Restart openronin.service\n2. Watch `htop` or `ps aux` — memory grows steadily\n3. Queue depth in `/status` shows thousands of pending items\n\nNo errors in logs. Looks like duplicate event processing.",
+      author: "carol",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["bug", "performance"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/103",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-004",
+    item: {
+      number: 104,
+      kind: "issue",
+      title: "Add GitLab provider support",
+      body: "Our team uses GitLab CE (self-hosted). Would love to use openronin with it.\n\nThe CLAUDE.md mentions `VcsProvider` abstraction — does that mean GitLab support could be added as a provider without changing core logic? If so, what's the expected interface?\n\nHappy to contribute a PR if someone can point me to the right files.",
+      author: "dave",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/104",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-005",
+    item: {
+      number: 105,
+      kind: "issue",
+      title: "Bot posts duplicate comments when pr_dialog runs twice concurrently",
+      body: "Race condition: if two webhooks fire within 200ms of each other for the same PR, pr_dialog starts twice and both instances post a comment.\n\nSeen in production: PR #27 got two identical bot responses at `2026-01-10T14:32:05Z` and `2026-01-10T14:32:06Z`.\n\nFixable with a DB-level lock or idempotency key per (pr_number, comment_id).",
+      author: "eve",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["bug", "concurrency"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/105",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-006",
+    item: {
+      number: 106,
+      kind: "issue",
+      title: "Per-repo daily cost cap not enforced separately",
+      body: "According to docs, `cost_caps.per_day_usd` is a global cap. But we need per-repo caps since repo A has a much higher volume than repo B.\n\nProposed: add `cost_cap_per_day_usd` field to per-repo config in YAML. Fall back to global if not set.",
+      author: "frank",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/106",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-007",
+    item: {
+      number: 107,
+      kind: "issue",
+      title: "Webhook HMAC validation fails for GitHub SHA-256 signatures",
+      body: "GitHub switched our webhook to `sha256=` prefix. The validator checks only for `sha1=` prefix.\n\n```\nError: Invalid webhook signature\n```\n\nFix: check for both `sha256=` and `sha1=` prefixes in the signature validator.",
+      author: "grace",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["bug", "security"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/107",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-008",
+    item: {
+      number: 108,
+      kind: "issue",
+      title: "Add CSV export for runs table in admin dashboard",
+      body: "The admin UI shows runs in a table but there's no way to export the data for offline analysis. A simple CSV download button would be enough.\n\nColumn order: started_at, repo, lane, engine, model, status, cost_usd, tokens_in, tokens_out.",
+      author: "hank",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/108",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-009",
+    item: {
+      number: 109,
+      kind: "issue",
+      title: "Config reload via fs.watch doesn't pick up engine_overrides",
+      body: "After editing `config.yaml` to change `engine_overrides` for a repo, the running process doesn't pick up the change even though `fs.watch` is active.\n\nI confirmed the file watcher fires (added a `console.log`) but the `RepoConfig.engine_overrides` remains stale.\n\nLooks like only top-level fields are re-parsed, not nested repo fields.",
+      author: "iris",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["bug"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/109",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-010",
+    item: {
+      number: 110,
+      kind: "issue",
+      title: "Add p95 latency metric to supervisor run reports",
+      body: "The runs table records `durationMs` per run but there's no aggregated p95 latency visible anywhere. When debugging slow triage, I have to manually scan the DB.\n\nSuggestion: add a stats row at the bottom of the admin runs table showing avg/p50/p95 for the visible page.",
+      author: "jack",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/110",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-011",
+    item: {
+      number: 111,
+      kind: "issue",
+      title: "Draft PRs incorrectly trigger pr_dialog lane",
+      body: "When I open a draft PR, the bot immediately posts a pr_dialog response as if it's ready for review. This spams the thread before the PR is actually reviewable.\n\nExpected: pr_dialog should only trigger on non-draft PRs, or when a draft is marked ready for review.",
+      author: "kate",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["bug"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/111",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-012",
+    item: {
+      number: 112,
+      kind: "issue",
+      title: "Cost reporting: show cost breakdown per repo in admin UI",
+      body: "All runs from all repos are lumped together in the admin UI. We manage 5 repos and need to see cost per repo to understand where budget is going.\n\nSimple table: repo | runs_today | cost_today_usd | cost_30d_usd would be enough.",
+      author: "leo",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/112",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-013",
+    item: {
+      number: 113,
+      kind: "issue",
+      title: "Bot responds to its own edited comments, creating an infinite loop",
+      body: "When openronin edits a comment (during pr_dialog iteration), a webhook fires for the edit, and the bot processes its own edit as new feedback, starting another pr_dialog cycle.\n\nThis happened twice today. The `isBotMessage` check works for new comments but not for edited comments (`comment.edited` event type).",
+      author: "mia",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["bug", "critical"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/113",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-014",
+    item: {
+      number: 114,
+      kind: "issue",
+      title: "Add Todoist integration as a tracker provider",
+      body: "We use Todoist for task management. The `TrackerProvider` interface looks ready — would be great to have a Todoist implementation.\n\nAPI docs: https://developer.todoist.com/rest/v2/\nAuth: API token (env var `TODOIST_API_TOKEN`)\n\nMinimum: fetch tasks with a specific label, update task status.",
+      author: "nick",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/114",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-015",
+    item: {
+      number: 115,
+      kind: "issue",
+      title: "Structured log viewer: filter runs by status and date in admin",
+      body: "The admin dashboard shows all runs in one table with no filtering. With 500+ runs per day, finding failed runs requires scrolling through everything.\n\nRequest: add filter controls for status (ok/error), date range, repo, and lane.",
+      author: "olivia",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/115",
+    },
+    expected: { decision: "keep_open" },
+  },
+  {
+    id: "t-016",
+    item: {
+      number: 116,
+      kind: "issue",
+      title: "Patch lane should verify the branch doesn't already exist before creating",
+      body: "If patch is triggered twice for the same issue (e.g., label removed and re-added), the second run tries to create a branch that already exists and fails with a git error.\n\nIdempotency check exists at the DB level but git branch creation still throws. Should check `git branch --list` or use `git checkout -B` instead.",
+      author: "paul",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["bug"],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/116",
+    },
+    expected: { decision: "keep_open" },
+  },
+
+  // --- CLOSE (14) ---
+  {
+    id: "t-017",
+    item: {
+      number: 201,
+      kind: "issue",
+      title: "doesn't work",
+      body: "it doesn't work fix it please",
+      author: "anon1",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/201",
+    },
+    expected: { decision: "close", closeReason: "incoherent" },
+  },
+  {
+    id: "t-018",
+    item: {
+      number: 202,
+      kind: "issue",
+      title: "ERROR ERROR PLEASE HELP",
+      body: "ERROR ERROR ERROR\nhelp me\nerror\n\nERROR",
+      author: "anon2",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/202",
+    },
+    expected: { decision: "close", closeReason: "incoherent" },
+  },
+  {
+    id: "t-019",
+    item: {
+      number: 203,
+      kind: "issue",
+      title: "GitHub rate limits are too strict for our usage",
+      body: "GitHub's API rate limit of 5000 requests/hour is preventing our CI from working. You should pressure GitHub to increase these limits for organizations using the API heavily.\n\nThis is blocking our pipeline.",
+      author: "anon3",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/203",
+    },
+    expected: { decision: "close", closeReason: "not_actionable_in_repo" },
+  },
+  {
+    id: "t-020",
+    item: {
+      number: 204,
+      kind: "issue",
+      title: "Your server is too slow, fix your hosting",
+      body: "The openronin service at your domain responds in 8 seconds. This is unacceptable. Please upgrade your server or switch to a faster hosting provider.",
+      author: "anon4",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/204",
+    },
+    expected: { decision: "close", closeReason: "not_actionable_in_repo" },
+  },
+  {
+    id: "t-021",
+    item: {
+      number: 205,
+      kind: "issue",
+      title: "sometimes crashes",
+      body: "the bot sometimes crashes. not sure when or why. it just stops working.",
+      author: "anon5",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: STALE_DATE,
+      updatedAt: STALE_DATE,
+      url: "https://github.com/test/repo/issues/205",
+    },
+    expected: { decision: "close", closeReason: "stale_insufficient_info" },
+  },
+  {
+    id: "t-022",
+    item: {
+      number: 206,
+      kind: "issue",
+      title: "performance issues",
+      body: "Performance is bad. The AI takes too long.",
+      author: "anon6",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: STALE_DATE,
+      updatedAt: STALE_DATE,
+      url: "https://github.com/test/repo/issues/206",
+    },
+    expected: { decision: "close", closeReason: "stale_insufficient_info" },
+  },
+  {
+    id: "t-023",
+    item: {
+      number: 207,
+      kind: "issue",
+      title: "🐛🐛🐛",
+      body: "🐛🐛🐛🐛🐛🐛🐛🐛🐛🐛",
+      author: "anon7",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/207",
+    },
+    expected: { decision: "close", closeReason: "incoherent" },
+  },
+  {
+    id: "t-024",
+    item: {
+      number: 208,
+      kind: "issue",
+      title: "Same issue as #103",
+      body: "I am experiencing the same problem described in issue #103. The memory keeps growing after restart. This is a duplicate of that issue.",
+      author: "anon8",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/208",
+    },
+    expected: { decision: "close", closeReason: "duplicate_or_superseded" },
+  },
+  {
+    id: "t-025",
+    item: {
+      number: 209,
+      kind: "issue",
+      title: "broken",
+      body: "this is broken",
+      author: "anon9",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/209",
+    },
+    expected: { decision: "close", closeReason: "incoherent" },
+  },
+  {
+    id: "t-026",
+    item: {
+      number: 210,
+      kind: "issue",
+      title: "The MIT license is not compatible with our GPL project",
+      body: "The MIT license used in this repo is incompatible with our GPL-licensed product. You need to change the license to GPL or LGPL to allow us to use it.\n\nPlease relicense the entire project.",
+      author: "anon10",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/210",
+    },
+    expected: { decision: "close", closeReason: "not_actionable_in_repo" },
+  },
+  {
+    id: "t-027",
+    item: {
+      number: 211,
+      kind: "issue",
+      title: "webhook sometimes fails",
+      body: "webhook doesn't work sometimes",
+      author: "anon11",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: STALE_DATE,
+      updatedAt: STALE_DATE,
+      url: "https://github.com/test/repo/issues/211",
+    },
+    expected: { decision: "close", closeReason: "stale_insufficient_info" },
+  },
+  {
+    id: "t-028",
+    item: {
+      number: 212,
+      kind: "issue",
+      title: "Ошибка при запуске / Error on startup",
+      body: "Купил подписку, ничего не работает. Деньги верните.\n\n(Bought subscription, nothing works. Refund my money.)",
+      author: "anon12",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/212",
+    },
+    expected: { decision: "close", closeReason: "not_actionable_in_repo" },
+  },
+  {
+    id: "t-029",
+    item: {
+      number: 213,
+      kind: "issue",
+      title: "Fix the MIMO API provider — their API is down again",
+      body: "The MIMO API (https://token-plan-sgp.xiaomimimo.com) has been returning 503 for 3 hours. This is not your bug but you need to fix it or switch providers.\n\nPlease contact MIMO support and resolve this urgently.",
+      author: "anon13",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: BASE_DATE,
+      updatedAt: BASE_DATE,
+      url: "https://github.com/test/repo/issues/213",
+    },
+    expected: { decision: "close", closeReason: "not_actionable_in_repo" },
+  },
+  {
+    id: "t-030",
+    item: {
+      number: 214,
+      kind: "issue",
+      title: "AI makes wrong decisions",
+      body: "The AI is making wrong decisions on my issues.",
+      author: "anon14",
+      authorAssociation: "NONE",
+      labels: [],
+      createdAt: STALE_DATE,
+      updatedAt: STALE_DATE,
+      url: "https://github.com/test/repo/issues/214",
+    },
+    expected: { decision: "close", closeReason: "stale_insufficient_info" },
+  },
+];
+
+export const analyzeFixtures: AnalyzeFixture[] = [
+  // --- READY (10) ---
+  {
+    id: "a-001",
+    item: {
+      number: 301,
+      title: "Add retry_count field to run log JSONL output",
+      body: "When an engine call retries (e.g., on 429), there is no record of the retry count in the JSONL run log. This makes it hard to diagnose cost overruns from retries.\n\n**Request**: Add `retry_count: number` to the JSONL run log written by `src/supervisor/index.ts` → `writeRunLog()`. The value should be the total number of retry attempts made across all engine retries for that run.",
+      author: "alice",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      existingComments: "",
+    },
+    expected: { state: "ready" },
+  },
+  {
+    id: "a-002",
+    item: {
+      number: 302,
+      title: "Add `runs:export` CLI command to export runs as CSV",
+      body: "Need a CLI command `runs:export` that exports the `runs` table to a CSV file.\n\n**Spec**:\n- Command: `node dist/index.js runs:export [--output runs.csv] [--since 2026-01-01]`\n- Columns: id, task_id, lane, engine, model, started_at, status, tokens_in, tokens_out, cost_usd\n- Default output: stdout\n- Optional `--output <file>` writes to file\n- Optional `--since <ISO date>` filters by started_at >= date",
+      author: "bob",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      existingComments: "",
+    },
+    expected: { state: "ready" },
+  },
+  {
+    id: "a-003",
+    item: {
+      number: 303,
+      title: "Add --dry-run flag to patch lane CLI command",
+      body: "The `patch:item` CLI command always pushes the branch. Need a `--dry-run` flag that runs everything (analyze, generate diff) but does not push to remote or create a PR.\n\n**Behavior with --dry-run**:\n- Clone and branch as normal\n- Run Claude Code worker\n- Print the diff to stdout\n- Exit without pushing or writing to DB",
+      author: "carol",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      existingComments: "",
+    },
+    expected: { state: "ready" },
+  },
+  {
+    id: "a-004",
+    item: {
+      number: 304,
+      title: "Write unit test for selectEngine precedence (cli > repo > global)",
+      body: "The `selectEngine` function in `src/supervisor/index.ts` has 3-level precedence (CLI override > repo override > global default) but there are no unit tests covering the repo-override level.\n\n**Task**: Add a test in `test/supervisor.test.mjs` that:\n1. Sets a global default engine to `mimo`\n2. Sets a repo override for `analyze` to `anthropic`\n3. Calls `selectEngine` with no CLI override\n4. Asserts that `anthropic` is selected for `analyze` and `mimo` for other lanes",
+      author: "dave",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["test"],
+      existingComments: "",
+    },
+    expected: { state: "ready" },
+  },
+  {
+    id: "a-005",
+    item: {
+      number: 305,
+      title: "Add .env.example file listing all required environment variables",
+      body: "New contributors don't know which environment variables are required. The secrets are in `secrets.env` on server but there's no example file in the repo.\n\n**Task**: Create `.env.example` at the repo root listing all variables with placeholder values and one-line comments. Required vars (from codebase audit): XIAOMI_MIMO_API_KEY, ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, OPENRONIN_DATA_DIR.",
+      author: "eve",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["documentation"],
+      existingComments: "",
+    },
+    expected: { state: "ready" },
+  },
+  {
+    id: "a-006",
+    item: {
+      number: 306,
+      title: "Increase webhook processing timeout from 10s to 30s",
+      body: "The webhook handler has a 10-second processing timeout. Complex triage runs sometimes exceed this, causing the webhook to time out and GitHub to retry, causing duplicate processing.\n\n**Fix**: Change the timeout in `src/server/index.ts` webhook route from `10_000` to `30_000` ms. The upstream GitHub timeout is 10s but we should ack immediately and process async — check if the current impl does this or blocks.",
+      author: "frank",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["bug"],
+      existingComments: "",
+    },
+    expected: { state: "ready" },
+  },
+  {
+    id: "a-007",
+    item: {
+      number: 307,
+      title: "Log cost_usd in run JSONL even when zero",
+      body: "Currently `writeRunLog` omits `cost_usd` from the JSONL when it is `undefined` or `0`. This makes JSONL rows inconsistent — some have the field, some don't.\n\n**Fix**: Always include `cost_usd` in run JSONL, defaulting to `null` when unknown (MIMO) and `0` when zero. Change the serialization in `src/supervisor/index.ts` → `writeRunLog`.",
+      author: "grace",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      existingComments: "",
+    },
+    expected: { state: "ready" },
+  },
+  {
+    id: "a-008",
+    item: {
+      number: 308,
+      title: "Rate-limit triage lane to max 20 issues per hour per repo",
+      body: "When a repo gets a burst of new issues (e.g., from a public launch), the triage lane processes all of them simultaneously, exhausting the daily cost cap in minutes.\n\n**Request**: Add a per-repo triage rate limit: max `N` triage jobs per hour (configurable, default 20). Jobs beyond the limit should be queued, not dropped. Config field: `triage_rate_limit_per_hour: 20` under repo config.",
+      author: "hank",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      existingComments: "",
+    },
+    expected: { state: "ready" },
+  },
+  {
+    id: "a-009",
+    item: {
+      number: 309,
+      title: "Show total run count badge in admin dashboard header",
+      body: "The admin dashboard header just shows 'openronin admin'. Add a small badge showing the total number of runs today and the total cost today.\n\n**Spec**: In the `<header>` of `src/server/index.ts` admin page, add two spans: `Runs today: N` and `Cost today: $X.XX`. Load via existing HTMX lazy-load pattern (avoid live API call on render).",
+      author: "iris",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      existingComments: "",
+    },
+    expected: { state: "ready" },
+  },
+  {
+    id: "a-010",
+    item: {
+      number: 310,
+      title: "Add `OPENRONIN_PAUSE` kill-switch: halt all mutations when file exists",
+      body: "Need an emergency kill-switch to pause all bot activity without restarting the service.\n\n**Spec**: \n- Check for `$OPENRONIN_DATA_DIR/.PAUSE` file at the start of every job in `runJob()`\n- If file exists: log a warning, skip the job, return `{ status: 'paused' }`\n- CLI command `scheduler:pause` creates the file, `scheduler:resume` removes it\n- The admin dashboard should show a banner if paused",
+      author: "jack",
+      authorAssociation: "CONTRIBUTOR",
+      labels: ["enhancement"],
+      existingComments: "",
+    },
+    expected: { state: "ready" },
+  },
+
+  // --- NEEDS CLARIFICATION (10) ---
+  {
+    id: "a-011",
+    item: {
+      number: 401,
+      title: "Improve AI quality",
+      body: "The AI is not making good decisions. The quality needs to be improved.\n\nCan you look into this?",
+      author: "anon1",
+      authorAssociation: "NONE",
+      labels: [],
+      existingComments: "",
+    },
+    expected: { state: "needs_clarification" },
+  },
+  {
+    id: "a-012",
+    item: {
+      number: 402,
+      title: "Make it faster",
+      body: "The bot is slow. We need it to be faster. Please optimize performance.",
+      author: "anon2",
+      authorAssociation: "NONE",
+      labels: [],
+      existingComments: "",
+    },
+    expected: { state: "needs_clarification" },
+  },
+  {
+    id: "a-013",
+    item: {
+      number: 403,
+      title: "Add OAuth support",
+      body: "We need OAuth support. Please add it.",
+      author: "anon3",
+      authorAssociation: "NONE",
+      labels: [],
+      existingComments: "",
+    },
+    expected: { state: "needs_clarification" },
+  },
+  {
+    id: "a-014",
+    item: {
+      number: 404,
+      title: "Better error messages",
+      body: "Error messages are not helpful. Please make them better so users can understand what went wrong.",
+      author: "anon4",
+      authorAssociation: "NONE",
+      labels: [],
+      existingComments: "",
+    },
+    expected: { state: "needs_clarification" },
+  },
+  {
+    id: "a-015",
+    item: {
+      number: 405,
+      title: "Support more issue trackers",
+      body: "We want to use more issue trackers. Please add support for them.",
+      author: "anon5",
+      authorAssociation: "NONE",
+      labels: [],
+      existingComments: "",
+    },
+    expected: { state: "needs_clarification" },
+  },
+  {
+    id: "a-016",
+    item: {
+      number: 406,
+      title: "Refactor the supervisor",
+      body: "The supervisor code is messy. It should be refactored to be cleaner and more maintainable. Please do this.",
+      author: "anon6",
+      authorAssociation: "NONE",
+      labels: [],
+      existingComments: "",
+    },
+    expected: { state: "needs_clarification" },
+  },
+  {
+    id: "a-017",
+    item: {
+      number: 407,
+      title: "The bot should be smarter about making decisions",
+      body: "Sometimes the bot makes wrong decisions. It should be smarter. Maybe use a better model or better prompts? I don't know, you figure it out.",
+      author: "anon7",
+      authorAssociation: "NONE",
+      labels: [],
+      existingComments: "",
+    },
+    expected: { state: "needs_clarification" },
+  },
+  {
+    id: "a-018",
+    item: {
+      number: 408,
+      title: "Add analytics",
+      body: "We need analytics. Please add some kind of analytics to understand how the bot is being used.",
+      author: "anon8",
+      authorAssociation: "NONE",
+      labels: [],
+      existingComments: "",
+    },
+    expected: { state: "needs_clarification" },
+  },
+  {
+    id: "a-019",
+    item: {
+      number: 409,
+      title: "Improve the UI",
+      body: "The admin UI looks dated. Please improve it to be more modern and user-friendly.",
+      author: "anon9",
+      authorAssociation: "NONE",
+      labels: [],
+      existingComments: "",
+    },
+    expected: { state: "needs_clarification" },
+  },
+  {
+    id: "a-020",
+    item: {
+      number: 410,
+      title: "Add more tests",
+      body: "We need more test coverage. Please add tests.",
+      author: "anon10",
+      authorAssociation: "NONE",
+      labels: [],
+      existingComments: "",
+    },
+    expected: { state: "needs_clarification" },
+  },
+];
+
+export const allFixtures = [...triageFixtures, ...analyzeFixtures];

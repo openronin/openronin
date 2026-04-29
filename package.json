@@ -1,0 +1,69 @@
+{
+  "name": "openronin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted AI developer agent that turns issues into merged pull requests. Supervisor + worker architecture, vendor-neutral VCS/tracker integration.",
+  "license": "MIT",
+  "homepage": "https://github.com/openronin/openronin",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openronin/openronin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/openronin/openronin/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "autonomous",
+    "developer-agent",
+    "claude",
+    "self-hosted",
+    "github-bot",
+    "code-review",
+    "auto-merge",
+    "mcp"
+  ],
+  "bin": {
+    "openronin-mcp": "dist/mcp/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsc -p tsconfig.json --watch & node --watch --env-file-if-exists=.env dist/index.js",
+    "test": "pnpm run build && node --test test/*.test.mjs",
+    "test:unit": "node --test test/*.test.mjs",
+    "test:integration": "node --test test/integration.test.mjs",
+    "lint": "oxlint src --tsconfig tsconfig.json",
+    "format": "oxfmt --write src test package.json tsconfig.json .oxfmtrc.json .github/workflows",
+    "format:check": "oxfmt --check src test package.json tsconfig.json .oxfmtrc.json .github/workflows",
+    "check": "pnpm run build && pnpm run lint && pnpm run test:unit && pnpm run format:check",
+    "bench:supervisor": "pnpm run build && node dist/bench/supervisor-bench.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@octokit/plugin-retry": "^7.1.2",
+    "@octokit/plugin-throttling": "^9.3.2",
+    "@octokit/rest": "^21.0.2",
+    "better-sqlite3": "^11.5.0",
+    "hono": "^4.6.10",
+    "yaml": "^2.6.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.9.0",
+    "oxfmt": "^0.46.0",
+    "oxlint": "^1.61.0",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.32.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
+  }
+}

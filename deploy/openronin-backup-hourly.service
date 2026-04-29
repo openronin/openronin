@@ -1,0 +1,13 @@
+[Unit]
+Description=openronin hourly SQLite backup
+Documentation=https://github.com/openronin/openronin
+
+[Service]
+Type=oneshot
+User=claude
+WorkingDirectory=/opt/openronin
+Environment=OPENRONIN_DATA_DIR=/var/lib/openronin
+ExecStart=/usr/bin/node /opt/openronin/scripts/sqlite-backup.mjs
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openronin-backup-hourly

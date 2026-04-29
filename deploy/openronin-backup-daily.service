@@ -1,0 +1,14 @@
+[Unit]
+Description=openronin daily rsync backup
+Documentation=https://github.com/openronin/openronin
+
+[Service]
+Type=oneshot
+User=claude
+WorkingDirectory=/opt/openronin
+EnvironmentFile=/var/lib/openronin/secrets.env
+Environment=OPENRONIN_DATA_DIR=/var/lib/openronin
+ExecStart=/opt/openronin/scripts/daily-rsync.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openronin-backup-daily

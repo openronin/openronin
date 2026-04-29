@@ -1,0 +1,70 @@
+# openronin — global configuration template
+#
+# Copy to $OPENRONIN_DATA_DIR/config/openronin.yaml and edit. Per-repo
+# configs go separately under $OPENRONIN_DATA_DIR/config/repos/.
+#
+# Anything you omit gets the default below — feel free to delete sections
+# you don't need to override.
+
+# ── HTTP server ────────────────────────────────────────────────────────────
+# These can also be set via env vars (OPENRONIN_PORT, OPENRONIN_BASE_URL,
+# OPENRONIN_ADMIN_USER) — env wins over YAML.
+server:
+  port: 8090
+  base_url: http://localhost:8090
+  admin_user: admin
+
+# ── Engine defaults ────────────────────────────────────────────────────────
+# Which provider+model handles each lane by default. Per-repo configs can
+# override individual lanes via engine_overrides.
+#
+# Providers:
+#   mimo          — Xiaomi MIMO (OpenAI-compatible). Cheap, used for
+#                   classification / triage / analyze. Never writes code.
+#   claude_code   — Claude Code CLI worker. Mutates code in a worktree.
+#                   Uses Max-subscription auth via ~/.claude/.credentials.json.
+#   anthropic     — Native Anthropic API. Used by multi_agent reviewer role.
+#   multi_agent   — Coder + reviewer two-pass for the patch_multi lane.
+engines:
+  defaults:
+    triage:      { provider: mimo, model: mimo-v2.5-pro }
+    analyze:     { provider: mimo, model: mimo-v2.5-pro }
+    deep_review: { provider: claude_code, model: sonnet }
+    patch:       { provider: claude_code, model: sonnet }
+    pr_dialog:   { provider: claude_code, model: sonnet }
+    patch_multi: { provider: multi_agent }
+
+# ── Polling cadence ────────────────────────────────────────────────────────
+# How often a watched repo gets a fresh "are there new tasks?" check.
+# Buckets are picked per-task by the cadence module — hot for active PRs,
+# default for quiet repos, cold for archived/low-priority ones.
+cadence:
+  hot: 5m
+  default: 1h
+  cold: 24h
+
+# ── Cost caps (USD) ────────────────────────────────────────────────────────
+# Hard kill-switches. When a task or day exceeds the cap, the supervisor
+# refuses to start new runs until the next reset.
+cost_caps:
+  per_task_usd: 5.0      # max spend on a single task across all lanes
+  per_day_usd: 50.0      # max total daily spend across all repos
+
+# ── Rate-limit cooldown ────────────────────────────────────────────────────
+# When an engine reports a hard rate-limit (Claude Code 429), pause
+# retrying that task for at least this long. If the engine surfaced an
+# explicit reset moment, the longer of the two is used.
+rate_limit_cooldown: 30m
+
+# ── Scheduler internals ────────────────────────────────────────────────────
+scheduler:
+  reconcile_interval: 15m   # full re-poll of every watched repo
+  drain_interval: 30s       # how often workers pull from the queue
+  drain_batch_size: 5       # max tasks per worker per drain tick
+
+# ── Telegram (optional) ────────────────────────────────────────────────────
+# Restrict who can DM the bot to send tasks. Empty list = anyone allowed
+# (NOT recommended for public bots).
+telegram:
+  allowed_user_ids: []
+  poll_timeout_seconds: 30
