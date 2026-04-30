@@ -2169,15 +2169,56 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
 
   // -------- Tasks --------
   app.get("/tasks", (c) => {
-    const limit = Number(c.req.query("limit") ?? "50");
+    const q = (k: string) => c.req.query(k) ?? "";
+    const statusFilter = q("status");
+    const repoFilter = q("repo");
+    const searchFilter = q("search");
+    const dateFrom = q("dateFrom");
+    const dateTo = q("dateTo");
+    const pageNum = Math.max(1, parseInt(q("page") || "1", 10) || 1);
+    const pageLimit = 50;
+    const offset = (pageNum - 1) * pageLimit;
+    const htmx = isHtmx(c.req.raw.headers);
+
+    const conditions: string[] = [];
+    const qParams: (string | number)[] = [];
+    if (statusFilter) {
+      conditions.push("t.status = ?");
+      qParams.push(statusFilter);
+    }
+    if (repoFilter) {
+      conditions.push("(r.owner || '/' || r.name) = ?");
+      qParams.push(repoFilter);
+    }
+    if (searchFilter) {
+      conditions.push("t.external_id LIKE ?");
+      qParams.push(`%${searchFilter}%`);
+    }
+    if (dateFrom) {
+      conditions.push("t.last_run_at >= ?");
+      qParams.push(dateFrom);
+    }
+    if (dateTo) {
+      conditions.push("t.last_run_at <= ?");
+      qParams.push(dateTo + "T23:59:59");
+    }
+    const where = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
+
+    const totalCount = (
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM tasks t JOIN repos r ON r.id = t.repo_id ${where}`)
+        .get(...qParams) as { n: number }
+    ).n;
+
     const rows = db
       .prepare(
         `SELECT t.*, r.provider AS provider, r.owner AS owner, r.name AS repo_name
          FROM tasks t JOIN repos r ON r.id = t.repo_id
+         ${where}
          ORDER BY COALESCE(t.last_run_at, '') DESC, t.id DESC
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
       )
-      .all(limit) as Array<{
+      .all(...qParams, pageLimit + 1, offset) as Array<{
       id: number;
       external_id: string;
       kind: string;
@@ -2191,43 +2232,80 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
       owner: string;
       repo_name: string;
     }>;
-    const list: TrustedHtml | TrustedHtml[] =
-      rows.length === 0
-        ? raw("<tr><td colspan=8 class='py-3 text-muted px-2'><em>no tasks yet</em></td></tr>")
-        : rows.map((t) => {
+
+    const hasMore = rows.length > pageLimit;
+    const displayRows = hasMore ? rows.slice(0, pageLimit) : rows;
+
+    const repoOptions = (
+      db
+        .prepare(
+          `SELECT DISTINCT r.owner || '/' || r.name AS repo
+           FROM tasks t JOIN repos r ON r.id = t.repo_id ORDER BY repo`,
+        )
+        .all() as { repo: string }[]
+    ).map((r) => r.repo);
+
+    const fp: Record<string, string | undefined> = {
+      status: statusFilter || undefined,
+      repo: repoFilter || undefined,
+      search: searchFilter || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    };
+    const hasFilter = Object.values(fp).some(Boolean);
+
+    const tableRows =
+      displayRows.length === 0
+        ? [
+            raw(
+              `<tr><td colspan="8" class="data-table-empty">${
+                hasFilter
+                  ? "No tasks match these filters. Try widening the date range or clearing filters."
+                  : "No tasks yet."
+              }</td></tr>`,
+            ),
+          ]
+        : displayRows.map((t) => {
             const decision = t.decision_json ? safeJson(t.decision_json) : null;
             const decisionLabel = decision?.decision
               ? html`<span
                   class="text-xs ${decision.decision === "close" ? "text-amber-700" : "text-muted"}"
-                  >${decision.decision}/${decision.close_reason ?? ""}</span
+                  >${decision.decision}${decision.close_reason
+                    ? "/" + decision.close_reason
+                    : ""}</span
                 >`
               : raw("");
             return html`
-              <tr class="border-t hover:bg-surface">
-                <td class="py-1.5 px-2">
-                  <a href="/admin/tasks/${t.id}" class="text-blue-700 hover:underline font-medium"
+              <tr
+                class="hover:bg-surface cursor-pointer"
+                onclick="location.href='/admin/tasks/${t.id}'"
+              >
+                <td class="px-3 py-2">
+                  <a
+                    href="/admin/tasks/${t.id}"
+                    class="text-brand hover:underline font-medium"
+                    onclick="event.stopPropagation()"
                     >${t.owner}/${t.repo_name}#${t.external_id}</a
                   >
                 </td>
-                <td class="py-1.5 px-2"><span class="text-xs text-muted">${t.kind}</span></td>
-                <td class="py-1.5 px-2">
-                  <span class="${taskStatusClass(t.status)} px-1.5 py-0.5 rounded text-xs"
-                    >${t.status}</span
-                  >
+                <td class="px-3 py-2 text-xs text-muted">${t.kind}</td>
+                <td class="px-3 py-2">
+                  ${badge({ label: t.status, tone: taskStatusTone(t.status) })}
                 </td>
-                <td class="py-1.5 px-2 text-xs text-muted">${t.priority}</td>
-                <td class="py-1.5 px-2 text-xs text-muted">${time(t.last_run_at)}</td>
-                <td class="py-1.5 px-2">${decisionLabel}</td>
-                <td class="py-1.5 px-2 text-xs ${t.last_error ? "text-red-700" : "text-muted"}">
+                <td class="px-3 py-2 text-xs text-muted">${t.priority}</td>
+                <td class="px-3 py-2 text-xs text-muted">${time(t.last_run_at)}</td>
+                <td class="px-3 py-2">${decisionLabel}</td>
+                <td class="px-3 py-2 text-xs ${t.last_error ? "text-red-700" : "text-muted"}">
                   ${t.last_error ? t.last_error.slice(0, 80) : ""}
                 </td>
-                <td class="py-1.5 px-2 text-right">
+                <td class="px-3 py-2 text-right">
                   <button
                     type="button"
                     hx-post="/admin/api/tasks/${t.id}/kick"
                     hx-target="closest td"
                     hx-swap="innerHTML"
-                    class="text-xs bg-amber-600 hover:bg-amber-700 text-white rounded px-2 py-0.5"
+                    onclick="event.stopPropagation()"
+                    class="btn btn-ghost btn-sm"
                     title="Mark task as due now with high priority"
                   >
                     kick
@@ -2236,45 +2314,158 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
               </tr>
             `;
           });
+
+    const paginationHtml = html`
+      <div class="flex gap-3 items-center mt-3 text-sm">
+        ${pageNum > 1
+          ? html`<a
+              href="/admin/tasks?${buildQueryString({ ...fp, page: String(pageNum - 1) })}"
+              class="text-brand hover:underline"
+              >&larr; prev</a
+            >`
+          : raw("")}
+        <span class="text-muted">page ${pageNum} · ${totalCount} total</span>
+        ${hasMore
+          ? html`<a
+              href="/admin/tasks?${buildQueryString({ ...fp, page: String(pageNum + 1) })}"
+              class="text-brand hover:underline"
+              >next &rarr;</a
+            >`
+          : raw("")}
+      </div>
+    `;
+
+    const tableWrap = html`
+      <div id="tasks-table-wrap">
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="data-table-th">Item</th>
+                <th class="data-table-th">Kind</th>
+                <th class="data-table-th">Status</th>
+                <th class="data-table-th">Priority</th>
+                <th class="data-table-th">Last run</th>
+                <th class="data-table-th">Decision</th>
+                <th class="data-table-th">Error</th>
+                <th class="data-table-th"></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+        </div>
+        ${paginationHtml}
+      </div>
+    `;
+
+    if (htmx) return c.html(tableWrap.value);
+
+    const selOpts = (list: string[], current: string, all = "all") =>
+      raw(
+        `<option value="">${all}</option>` +
+          list
+            .map(
+              (v) =>
+                `<option value="${escapeAttr(v)}"${current === v ? " selected" : ""}>${escapeAttr(v)}</option>`,
+            )
+            .join(""),
+      );
+
+    const filterBar = html`
+      <form
+        id="tasks-filter"
+        class="flex flex-wrap gap-2 mb-4 items-end bg-elevated border border-subtle rounded-lg p-3"
+      >
+        <div class="flex flex-col gap-1">
+          <label class="form-label">Search</label>
+          <input
+            type="text"
+            name="search"
+            value="${searchFilter}"
+            placeholder="issue/PR #…"
+            class="form-input w-32"
+            hx-get="/admin/tasks"
+            hx-include="closest form"
+            hx-target="#tasks-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="input changed delay:400ms"
+          />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">Status</label>
+          <select
+            name="status"
+            class="form-select h-9"
+            hx-get="/admin/tasks"
+            hx-include="closest form"
+            hx-target="#tasks-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="change"
+          >
+            ${selOpts(["pending", "running", "done", "error"], statusFilter)}
+          </select>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">Repo</label>
+          <select
+            name="repo"
+            class="form-select h-9"
+            hx-get="/admin/tasks"
+            hx-include="closest form"
+            hx-target="#tasks-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="change"
+          >
+            ${selOpts(repoOptions, repoFilter)}
+          </select>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">From</label>
+          <input type="date" name="dateFrom" value="${dateFrom}" class="form-input" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">To</label>
+          <input type="date" name="dateTo" value="${dateTo}" class="form-input" />
+        </div>
+        <button
+          type="button"
+          hx-get="/admin/tasks"
+          hx-include="closest form"
+          hx-target="#tasks-table-wrap"
+          hx-swap="outerHTML"
+          hx-push-url="true"
+          class="btn btn-secondary btn-sm self-end"
+        >
+          Filter
+        </button>
+        ${hasFilter
+          ? html`<a href="/admin/tasks" class="btn btn-ghost btn-sm self-end text-muted">Clear</a>`
+          : raw("")}
+      </form>
+    `;
+
     const body = html`
       <div class="flex items-center justify-between mb-4">
-        <h1 class="text-2xl font-semibold">Tasks</h1>
+        <div>
+          <h1 class="text-2xl font-semibold">Tasks</h1>
+          <p class="text-sm text-muted mt-0.5">
+            ${totalCount}
+            task${totalCount === 1 ? "" : "s"}${hasFilter ? " matching filters" : " total"}
+          </p>
+        </div>
         <div class="flex gap-2">
-          <a
-            href="/admin/api/export/tasks.csv"
-            class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
-            >CSV</a
-          >
-          <a
-            href="/admin/api/export/tasks.json"
-            class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
-            >JSON</a
-          >
+          <a href="/admin/api/export/tasks.csv" class="btn btn-ghost btn-sm">CSV</a>
+          <a href="/admin/api/export/tasks.json" class="btn btn-ghost btn-sm">JSON</a>
         </div>
       </div>
-      <section class="bg-elevated rounded shadow-sm border">
-        <table class="w-full text-sm">
-          <thead class="bg-surface text-secondary text-left">
-            <tr>
-              <th class="px-2 py-2">Item</th>
-              <th class="px-2 py-2">Kind</th>
-              <th class="px-2 py-2">Status</th>
-              <th class="px-2 py-2">Priority</th>
-              <th class="px-2 py-2">Last run</th>
-              <th class="px-2 py-2">Decision</th>
-              <th class="px-2 py-2">Error</th>
-              <th class="px-2 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            ${list}
-          </tbody>
-        </table>
-      </section>
+      ${filterBar} ${tableWrap}
     `;
-    return c.html(
-      page({ title: "Tasks", section: "tasks", body, isHtmx: isHtmx(c.req.raw.headers) }),
-    );
+    return c.html(page({ title: "Tasks", section: "tasks", body, isHtmx: false }));
   });
 
   // -------- Task detail --------
@@ -2593,23 +2784,69 @@ ${decisionPretty}</pre
   app.get("/cost", (c) => {
     const config = getConfig();
     const perDayUsd = config.global.cost_caps.per_day_usd;
-    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const since0 = "1970-01-01T00:00:00.000Z";
 
-    const { totalCostUsd: cost24h } = getCostUsdSince(db, since24h);
-    const { totalCostUsd: costTotal } = getCostUsdSince(db, since0);
+    // Range toggle: 24h (default) | 7d | 30d
+    const range = c.req.query("range") ?? "24h";
+    const rangeSince =
+      range === "30d"
+        ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+        : range === "7d"
+          ? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+          : new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const rangeLabel = range === "30d" ? "30 days" : range === "7d" ? "7 days" : "24h";
 
-    const byLane = getCostGroupedByLane(db, since24h);
-    const byEngine = getCostGroupedByEngine(db, since24h);
-    const byRepo = getCostGroupedByRepo(db, since24h);
+    // Stat counters: today / this week / this month + deltas
+    const todaySince = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").toISOString();
+    const yesterdaySince = new Date(
+      new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10) + "T00:00:00Z",
+    ).toISOString();
+    const weekSince = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const prevWeekSince = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+    const monthSince = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const prevMonthSince = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
 
-    const pct = perDayUsd > 0 ? Math.min((cost24h / perDayUsd) * 100, 100) : 0;
+    const { totalCostUsd: costToday } = getCostUsdSince(db, todaySince);
+    const { totalCostUsd: costYesterday } = getCostUsdSince(db, yesterdaySince);
+    const costYesterdayOnly = costYesterday - costToday;
+
+    const { totalCostUsd: costWeek } = getCostUsdSince(db, weekSince);
+    const { totalCostUsd: costPrevWeek } = getCostUsdSince(db, prevWeekSince);
+    const costPrevWeekOnly = costPrevWeek - costWeek;
+
+    const { totalCostUsd: costMonth } = getCostUsdSince(db, monthSince);
+    const { totalCostUsd: costPrevMonth } = getCostUsdSince(db, prevMonthSince);
+    const costPrevMonthOnly = costPrevMonth - costMonth;
+
+    const byLane = getCostGroupedByLane(db, rangeSince);
+    const byEngine = getCostGroupedByEngine(db, rangeSince);
+    const byRepo = getCostGroupedByRepo(db, rangeSince);
+
+    // Daily cost for chart (last 30 days)
+    const dailyCosts = db
+      .prepare(
+        `SELECT DATE(started_at) AS day, COALESCE(SUM(cost_usd), 0) AS cost
+         FROM runs WHERE started_at >= ? GROUP BY day ORDER BY day`,
+      )
+      .all(monthSince) as { day: string; cost: number }[];
+
+    const pct = perDayUsd > 0 ? Math.min((costToday / perDayUsd) * 100, 100) : 0;
     const barColor = pct >= 80 ? "bg-red-500" : pct >= 50 ? "bg-yellow-400" : "bg-green-500";
-    const textColor = pct >= 80 ? "text-red-700" : pct >= 50 ? "text-yellow-700" : "text-green-700";
+    const capTextColor =
+      pct >= 80 ? "text-red-700" : pct >= 50 ? "text-yellow-700" : "text-green-700";
+
+    function deltaHtml(current: number, previous: number): TrustedHtml {
+      if (previous === 0) return raw("");
+      const diff = current - previous;
+      const sign = diff >= 0 ? "+" : "";
+      const cls = diff > 0 ? "text-red-600" : "text-green-600";
+      return html`<span class="text-xs ${cls} ml-1"
+        >${sign}$${Math.abs(diff).toFixed(4)} vs prev</span
+      >`;
+    }
 
     function groupTable(rows: { key: string; cost: number; runs: number }[]): TrustedHtml {
       if (rows.length === 0)
-        return raw("<tr><td colspan=3 class='py-2 text-muted text-xs'>no data</td></tr>");
+        return raw("<tr><td colspan=3 class='py-2 text-muted text-xs px-2'>no data</td></tr>");
       return html`${rows.map(
         (r) => html`<tr class="border-t">
           <td class="py-1.5 px-2 text-sm">${r.key}</td>
@@ -2619,30 +2856,49 @@ ${decisionPretty}</pre
       )}`;
     }
 
-    const body = html`
-      <h1 class="text-2xl font-semibold mb-6">Cost</h1>
+    const rangeTab = (r: string, label: string) => {
+      const active = range === r;
+      return raw(
+        `<a href="/admin/cost?range=${r}" class="px-3 py-1.5 text-sm rounded ${active ? "bg-brand text-white" : "text-muted hover:text-secondary hover:bg-sunken"}">${label}</a>`,
+      );
+    };
 
-      <section class="grid grid-cols-2 gap-4 mb-6">
-        <div class="bg-elevated rounded shadow-sm border p-4">
-          <p class="text-sm text-muted mb-1">Last 24 hours</p>
-          <p class="text-3xl font-semibold font-mono ${textColor}">$${cost24h.toFixed(4)}</p>
+    const body = html`
+      <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-semibold">Cost</h1>
+        <div class="flex gap-1 bg-elevated border border-subtle rounded-lg p-1">
+          ${rangeTab("24h", "24h")} ${rangeTab("7d", "7d")} ${rangeTab("30d", "30d")}
         </div>
-        <div class="bg-elevated rounded shadow-sm border p-4">
-          <p class="text-sm text-muted mb-1">All time</p>
-          <p class="text-3xl font-semibold font-mono">$${costTotal.toFixed(4)}</p>
+      </div>
+
+      <section class="grid grid-cols-3 gap-4 mb-6">
+        <div class="bg-elevated rounded-lg shadow-sm border border-subtle p-4">
+          <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">Today</p>
+          <p class="text-3xl font-semibold font-mono text-primary">$${costToday.toFixed(4)}</p>
+          ${deltaHtml(costToday, costYesterdayOnly)}
+        </div>
+        <div class="bg-elevated rounded-lg shadow-sm border border-subtle p-4">
+          <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">This week</p>
+          <p class="text-3xl font-semibold font-mono text-primary">$${costWeek.toFixed(4)}</p>
+          ${deltaHtml(costWeek, costPrevWeekOnly)}
+        </div>
+        <div class="bg-elevated rounded-lg shadow-sm border border-subtle p-4">
+          <p class="text-xs font-medium text-muted uppercase tracking-wide mb-1">This month</p>
+          <p class="text-3xl font-semibold font-mono text-primary">$${costMonth.toFixed(4)}</p>
+          ${deltaHtml(costMonth, costPrevMonthOnly)}
         </div>
       </section>
 
-      <section class="bg-elevated rounded shadow-sm border p-4 mb-6">
+      <section class="bg-elevated rounded-lg shadow-sm border border-subtle p-4 mb-6">
         <div class="flex justify-between text-sm mb-1">
-          <span class="font-medium">Daily cap usage</span>
-          <span class="${textColor} font-mono">
-            $${cost24h.toFixed(4)} / $${perDayUsd.toFixed(2)} (${pct.toFixed(1)}%)
+          <span class="font-medium">Daily cap usage (today)</span>
+          <span class="${capTextColor} font-mono">
+            $${costToday.toFixed(4)} / $${perDayUsd.toFixed(2)} (${pct.toFixed(1)}%)
           </span>
         </div>
-        <div class="w-full bg-sunken rounded h-4 overflow-hidden">
+        <div class="w-full bg-sunken rounded h-3 overflow-hidden">
           <div
-            class="${barColor} h-4 rounded transition-all"
+            class="${barColor} h-3 rounded transition-all"
             style="width:${pct.toFixed(2)}%"
           ></div>
         </div>
@@ -2651,9 +2907,16 @@ ${decisionPretty}</pre
           : raw("")}
       </section>
 
+      <section class="bg-elevated rounded-lg shadow-sm border border-subtle p-4 mb-6">
+        <h2 class="text-sm font-semibold mb-3 text-secondary">Daily cost — last 30 days</h2>
+        ${dailyCostSvg(dailyCosts)}
+      </section>
+
       <section class="grid grid-cols-3 gap-4">
-        <div class="bg-elevated rounded shadow-sm border">
-          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">By lane (24h)</h2>
+        <div class="bg-elevated rounded-lg shadow-sm border border-subtle">
+          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">
+            By lane (${rangeLabel})
+          </h2>
           <table class="w-full text-sm">
             <thead class="text-left text-muted text-xs">
               <tr>
@@ -2667,8 +2930,10 @@ ${decisionPretty}</pre
             </tbody>
           </table>
         </div>
-        <div class="bg-elevated rounded shadow-sm border">
-          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">By engine (24h)</h2>
+        <div class="bg-elevated rounded-lg shadow-sm border border-subtle">
+          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">
+            By engine (${rangeLabel})
+          </h2>
           <table class="w-full text-sm">
             <thead class="text-left text-muted text-xs">
               <tr>
@@ -2682,8 +2947,10 @@ ${decisionPretty}</pre
             </tbody>
           </table>
         </div>
-        <div class="bg-elevated rounded shadow-sm border">
-          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">By repo (24h)</h2>
+        <div class="bg-elevated rounded-lg shadow-sm border border-subtle">
+          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">
+            By repo (${rangeLabel})
+          </h2>
           <table class="w-full text-sm">
             <thead class="text-left text-muted text-xs">
               <tr>
@@ -2842,26 +3109,28 @@ ${decisionPretty}</pre
     );
   });
 
-  // -------- Logs --------
+  // -------- Logs (run viewer) --------
   app.get("/logs", (c) => {
-    const q = (key: string) => c.req.query(key);
+    const qp = (key: string) => c.req.query(key);
     const filter = {
-      lane: q("lane") || undefined,
-      engine: q("engine") || undefined,
-      model: q("model") || undefined,
-      status: q("status") || undefined,
-      repo: q("repo") || undefined,
-      dateFrom: q("dateFrom") || undefined,
-      dateTo: q("dateTo") || undefined,
-      errorSearch: q("errorSearch") || undefined,
+      lane: qp("lane") || undefined,
+      engine: qp("engine") || undefined,
+      model: qp("model") || undefined,
+      status: qp("status") || undefined,
+      repo: qp("repo") || undefined,
+      dateFrom: qp("dateFrom") || undefined,
+      dateTo: qp("dateTo") || undefined,
+      errorSearch: qp("errorSearch") || undefined,
     };
-    const page_ = Math.max(1, parseInt(q("page") ?? "1", 10) || 1);
+    const page_ = Math.max(1, parseInt(qp("page") ?? "1", 10) || 1);
     const limit = 50;
     const offset = (page_ - 1) * limit;
     const runs = listRunsFiltered(db, { ...filter, limit: limit + 1, offset });
     const hasMore = runs.length > limit;
     const rows = hasMore ? runs.slice(0, limit) : runs;
     const distincts = getRunDistincts(db);
+    const htmx = isHtmx(c.req.raw.headers);
+    const hasFilter = Object.values(filter).some(Boolean);
 
     const selOpts = (list: string[], current: string | undefined, all = "all") =>
       raw(
@@ -2874,109 +3143,53 @@ ${decisionPretty}</pre
             .join(""),
       );
 
-    const filterForm = html`
-      <form method="get" action="/admin/logs" class="flex flex-wrap gap-2 mb-4 items-end">
-        <div class="flex flex-col text-xs">
-          <label class="text-muted mb-0.5">Lane</label>
-          <select name="lane" class="border rounded px-1 py-0.5 text-sm">
-            ${selOpts(distincts.lanes, filter.lane)}
-          </select>
-        </div>
-        <div class="flex flex-col text-xs">
-          <label class="text-muted mb-0.5">Engine</label>
-          <select name="engine" class="border rounded px-1 py-0.5 text-sm">
-            ${selOpts(distincts.engines, filter.engine)}
-          </select>
-        </div>
-        <div class="flex flex-col text-xs">
-          <label class="text-muted mb-0.5">Model</label>
-          <select name="model" class="border rounded px-1 py-0.5 text-sm">
-            ${selOpts(distincts.models, filter.model)}
-          </select>
-        </div>
-        <div class="flex flex-col text-xs">
-          <label class="text-muted mb-0.5">Status</label>
-          <select name="status" class="border rounded px-1 py-0.5 text-sm">
-            ${selOpts(["ok", "error", "running"], filter.status)}
-          </select>
-        </div>
-        <div class="flex flex-col text-xs">
-          <label class="text-muted mb-0.5">Repo</label>
-          <select name="repo" class="border rounded px-1 py-0.5 text-sm">
-            ${selOpts(distincts.repos, filter.repo)}
-          </select>
-        </div>
-        <div class="flex flex-col text-xs">
-          <label class="text-muted mb-0.5">From</label>
-          <input
-            type="date"
-            name="dateFrom"
-            value="${filter.dateFrom ?? ""}"
-            class="border rounded px-1 py-0.5 text-sm"
-          />
-        </div>
-        <div class="flex flex-col text-xs">
-          <label class="text-muted mb-0.5">To</label>
-          <input
-            type="date"
-            name="dateTo"
-            value="${filter.dateTo ?? ""}"
-            class="border rounded px-1 py-0.5 text-sm"
-          />
-        </div>
-        <div class="flex flex-col text-xs flex-1 min-w-40">
-          <label class="text-muted mb-0.5">Error search</label>
-          <input
-            type="text"
-            name="errorSearch"
-            value="${filter.errorSearch ?? ""}"
-            placeholder="substring…"
-            class="border rounded px-1 py-0.5 text-sm"
-          />
-        </div>
-        <button
-          type="submit"
-          class="bg-slate-700 text-white px-3 py-1 rounded text-sm hover:bg-slate-800"
-        >
-          Filter
-        </button>
-        <a href="/admin/logs" class="text-muted text-sm hover:underline self-end pb-1">reset</a>
-      </form>
-    `;
-
     const tableRows =
       rows.length === 0
-        ? raw(
-            "<tr><td colspan='8' class='text-muted py-4 text-center'><em>no runs match</em></td></tr>",
-          )
+        ? [
+            raw(
+              `<tr><td colspan="9" class="data-table-empty">${
+                hasFilter
+                  ? "No runs match these filters. Try widening the date range or clearing filters."
+                  : "No runs yet."
+              }</td></tr>`,
+            ),
+          ]
         : rows.map(
             (r) => html`
-              <tr class="border-t hover:bg-surface">
-                <td class="px-2 py-1">#${r.id}</td>
-                <td class="px-2 py-1 text-xs text-muted whitespace-nowrap">
+              <tr class="hover:bg-surface">
+                <td class="px-2 py-2 text-xs font-mono text-muted">#${r.id}</td>
+                <td class="px-2 py-2 text-xs text-muted whitespace-nowrap">
                   ${time(r.started_at)}
                 </td>
-                <td class="px-2 py-1 text-xs">${r.lane}</td>
-                <td class="px-2 py-1 text-xs">${r.engine}/${r.model ?? "?"}</td>
-                <td class="px-2 py-1">
-                  <span class="${runStatusClass(r.status)} px-1.5 py-0.5 rounded text-xs"
-                    >${r.status}</span
-                  >
+                <td class="px-2 py-2 text-xs">${r.lane}</td>
+                <td class="px-2 py-2 text-xs">${r.engine}/${r.model ?? "?"}</td>
+                <td class="px-2 py-2">
+                  ${badge({ label: r.status, tone: runStatusTone(r.status) })}
                 </td>
-                <td class="px-2 py-1 text-xs">${r.repo ?? "—"}</td>
-                <td class="px-2 py-1 text-xs whitespace-nowrap">
+                <td class="px-2 py-2 text-xs">${r.repo ?? "—"}</td>
+                <td class="px-2 py-2 text-xs whitespace-nowrap">
                   ${r.tokens_in ?? "-"}/${r.tokens_out ?? "-"}
                 </td>
-                <td class="px-2 py-1 text-xs whitespace-nowrap">
+                <td class="px-2 py-2 text-xs whitespace-nowrap font-mono">
                   ${r.cost_usd != null ? "$" + r.cost_usd.toFixed(4) : "—"}
+                </td>
+                <td class="px-2 py-2 text-right">
+                  ${r.task_id
+                    ? html`<a
+                        href="/admin/tasks/${r.task_id}"
+                        class="btn btn-ghost btn-sm"
+                        title="View task detail"
+                        >Task ↗</a
+                      >`
+                    : raw("")}
                 </td>
               </tr>
               ${r.log_path
                 ? html`<tr class="border-b bg-surface">
-                    <td colspan="8" class="px-2 pb-1">
+                    <td colspan="9" class="px-2 pb-1">
                       <details>
                         <summary
-                          class="cursor-pointer text-xs text-blue-700 hover:underline select-none"
+                          class="cursor-pointer text-xs text-brand hover:underline select-none"
                         >
                           show log
                         </summary>
@@ -2992,7 +3205,7 @@ ${decisionPretty}</pre
                     </td>
                   </tr>`
                 : html`<tr class="border-b">
-                    <td colspan="8" class="px-2 pb-1 text-xs text-muted">
+                    <td colspan="9" class="px-2 pb-1 text-xs text-muted">
                       ${r.error ? r.error : raw("<em>no log file</em>")}
                     </td>
                   </tr>`}
@@ -3000,11 +3213,11 @@ ${decisionPretty}</pre
           );
 
     const pagination = html`
-      <div class="flex gap-3 items-center mt-4 text-sm">
+      <div class="flex gap-3 items-center mt-3 text-sm">
         ${page_ > 1
           ? html`<a
               href="/admin/logs?${buildQueryString({ ...filter, page: String(page_ - 1) })}"
-              class="text-blue-700 hover:underline"
+              class="text-brand hover:underline"
               >&larr; prev</a
             >`
           : raw("")}
@@ -3012,55 +3225,174 @@ ${decisionPretty}</pre
         ${hasMore
           ? html`<a
               href="/admin/logs?${buildQueryString({ ...filter, page: String(page_ + 1) })}"
-              class="text-blue-700 hover:underline"
+              class="text-brand hover:underline"
               >next &rarr;</a
             >`
           : raw("")}
       </div>
     `;
 
+    const tableWrap = html`
+      <div id="logs-table-wrap">
+        <div class="data-table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="data-table-th">id</th>
+                <th class="data-table-th">started</th>
+                <th class="data-table-th">lane</th>
+                <th class="data-table-th">engine/model</th>
+                <th class="data-table-th">status</th>
+                <th class="data-table-th">repo</th>
+                <th class="data-table-th">tokens in/out</th>
+                <th class="data-table-th">cost</th>
+                <th class="data-table-th"></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+        </div>
+        ${pagination}
+      </div>
+    `;
+
+    if (htmx) return c.html(tableWrap.value);
+
+    const filterForm = html`
+      <form
+        id="logs-filter"
+        class="flex flex-wrap gap-2 mb-4 items-end bg-elevated border border-subtle rounded-lg p-3"
+      >
+        <div class="flex flex-col gap-1">
+          <label class="form-label">Lane</label>
+          <select
+            name="lane"
+            class="form-select h-9"
+            hx-get="/admin/logs"
+            hx-include="closest form"
+            hx-target="#logs-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="change"
+          >
+            ${selOpts(distincts.lanes, filter.lane)}
+          </select>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">Engine</label>
+          <select
+            name="engine"
+            class="form-select h-9"
+            hx-get="/admin/logs"
+            hx-include="closest form"
+            hx-target="#logs-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="change"
+          >
+            ${selOpts(distincts.engines, filter.engine)}
+          </select>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">Model</label>
+          <select
+            name="model"
+            class="form-select h-9"
+            hx-get="/admin/logs"
+            hx-include="closest form"
+            hx-target="#logs-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="change"
+          >
+            ${selOpts(distincts.models, filter.model)}
+          </select>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">Status</label>
+          <select
+            name="status"
+            class="form-select h-9"
+            hx-get="/admin/logs"
+            hx-include="closest form"
+            hx-target="#logs-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="change"
+          >
+            ${selOpts(["ok", "error", "running"], filter.status)}
+          </select>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">Repo</label>
+          <select
+            name="repo"
+            class="form-select h-9"
+            hx-get="/admin/logs"
+            hx-include="closest form"
+            hx-target="#logs-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="change"
+          >
+            ${selOpts(distincts.repos, filter.repo)}
+          </select>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">From</label>
+          <input type="date" name="dateFrom" value="${filter.dateFrom ?? ""}" class="form-input" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">To</label>
+          <input type="date" name="dateTo" value="${filter.dateTo ?? ""}" class="form-input" />
+        </div>
+        <div class="flex flex-col gap-1 flex-1 min-w-36">
+          <label class="form-label">Error search</label>
+          <input
+            type="text"
+            name="errorSearch"
+            value="${filter.errorSearch ?? ""}"
+            placeholder="substring…"
+            class="form-input"
+            hx-get="/admin/logs"
+            hx-include="closest form"
+            hx-target="#logs-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="input changed delay:400ms"
+          />
+        </div>
+        <button
+          type="button"
+          hx-get="/admin/logs"
+          hx-include="closest form"
+          hx-target="#logs-table-wrap"
+          hx-swap="outerHTML"
+          hx-push-url="true"
+          class="btn btn-secondary btn-sm self-end"
+        >
+          Filter
+        </button>
+        ${hasFilter
+          ? html`<a href="/admin/logs" class="btn btn-ghost btn-sm self-end text-muted">Clear</a>`
+          : raw("")}
+      </form>
+    `;
+
     const body = html`
       <div class="flex items-center justify-between mb-4">
         <h1 class="text-2xl font-semibold">Logs</h1>
         <div class="flex gap-2">
-          <a
-            href="/admin/api/export/runs.csv"
-            class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
-            >CSV</a
-          >
-          <a
-            href="/admin/api/export/runs.json"
-            class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
-            >JSON</a
-          >
+          <a href="/admin/api/export/runs.csv" class="btn btn-ghost btn-sm">CSV</a>
+          <a href="/admin/api/export/runs.json" class="btn btn-ghost btn-sm">JSON</a>
         </div>
       </div>
-      ${filterForm}
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm bg-elevated border rounded shadow-sm">
-          <thead class="bg-surface text-secondary text-left text-xs">
-            <tr>
-              <th class="px-2 py-2">id</th>
-              <th class="px-2 py-2">started</th>
-              <th class="px-2 py-2">lane</th>
-              <th class="px-2 py-2">engine/model</th>
-              <th class="px-2 py-2">status</th>
-              <th class="px-2 py-2">repo</th>
-              <th class="px-2 py-2">tokens in/out</th>
-              <th class="px-2 py-2">cost</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tableRows}
-          </tbody>
-        </table>
-      </div>
-      ${pagination}
+      ${filterForm} ${tableWrap}
     `;
 
-    return c.html(
-      page({ title: "Logs", section: "logs", body, isHtmx: isHtmx(c.req.raw.headers) }),
-    );
+    return c.html(page({ title: "Logs", section: "logs", body, isHtmx: false }));
   });
 
   app.get("/api/runs/:id/log", (c) => {
@@ -3330,13 +3662,45 @@ ${text}</textarea
 
   // -------- Audit log page --------
   app.get("/audit", (c) => {
-    const limit = Number(c.req.query("limit") ?? "100");
+    const qp = (k: string) => c.req.query(k) ?? "";
+    const methodFilter = qp("method");
+    const pathSearch = qp("path");
+    const dateFrom = qp("dateFrom");
+    const dateTo = qp("dateTo");
+    const pageNum = Math.max(1, parseInt(qp("page") || "1", 10) || 1);
+    const pageLimit = 50;
+    const offset = (pageNum - 1) * pageLimit;
+    const htmx = isHtmx(c.req.raw.headers);
+
+    const conditions: string[] = [];
+    const qParams: (string | number)[] = [];
+    if (methodFilter) {
+      conditions.push("method = ?");
+      qParams.push(methodFilter);
+    }
+    if (pathSearch) {
+      conditions.push("path LIKE ?");
+      qParams.push(`%${pathSearch}%`);
+    }
+    if (dateFrom) {
+      conditions.push("created_at >= ?");
+      qParams.push(dateFrom);
+    }
+    if (dateTo) {
+      conditions.push("created_at <= ?");
+      qParams.push(dateTo + "T23:59:59");
+    }
+    const where = conditions.length ? "WHERE " + conditions.join(" AND ") : "";
+
+    const totalCount = (
+      db.prepare(`SELECT COUNT(*) AS n FROM admin_audit ${where}`).get(...qParams) as { n: number }
+    ).n;
+
     const rows = db
       .prepare(
-        `SELECT id, method, path, actor, created_at
-         FROM admin_audit ORDER BY id DESC LIMIT ?`,
+        `SELECT id, method, path, actor, created_at FROM admin_audit ${where} ORDER BY id DESC LIMIT ? OFFSET ?`,
       )
-      .all(limit) as {
+      .all(...qParams, pageLimit + 1, offset) as {
       id: number;
       method: string;
       path: string;
@@ -3344,58 +3708,171 @@ ${text}</textarea
       created_at: string;
     }[];
 
-    const methodClass = (m: string) =>
-      m === "POST" ? "badge-success" : m === "DELETE" ? "badge-danger" : "badge-info";
+    const hasMore = rows.length > pageLimit;
+    const displayRows = hasMore ? rows.slice(0, pageLimit) : rows;
+    const fp: Record<string, string | undefined> = {
+      method: methodFilter || undefined,
+      path: pathSearch || undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+    };
+    const hasFilter = Object.values(fp).some(Boolean);
 
-    const tableRows = rows.map(
-      (r) => html`<tr class="border-t">
-        <td class="px-3 py-1.5 text-xs text-muted font-mono">${String(r.id)}</td>
-        <td class="px-3 py-1.5">
-          <span class="${methodClass(r.method)} px-1.5 py-0.5 rounded text-xs font-mono"
-            >${r.method}</span
+    const methodTone = (m: string): import("./components/badge.js").BadgeTone =>
+      m === "POST" ? "success" : m === "DELETE" ? "danger" : "info";
+
+    const tableRows =
+      displayRows.length === 0
+        ? [
+            raw(
+              `<tr><td colspan="5" class="data-table-empty">${
+                hasFilter
+                  ? "No audit entries match these filters."
+                  : "No admin actions in this period. The audit log captures every kick, drain, deploy, etc."
+              }</td></tr>`,
+            ),
+          ]
+        : displayRows.map(
+            (r) => html`<tr class="hover:bg-surface">
+              <td class="px-3 py-2 text-xs text-muted font-mono">${String(r.id)}</td>
+              <td class="px-3 py-2">${badge({ label: r.method, tone: methodTone(r.method) })}</td>
+              <td class="px-3 py-2 font-mono text-xs">${r.path}</td>
+              <td class="px-3 py-2 text-xs text-muted">${r.actor}</td>
+              <td class="px-3 py-2 text-xs">${time(r.created_at)}</td>
+            </tr>`,
+          );
+
+    const paginationHtml = html`
+      <div class="flex gap-3 items-center mt-3 text-sm">
+        ${pageNum > 1
+          ? html`<a
+              href="/admin/audit?${buildQueryString({ ...fp, page: String(pageNum - 1) })}"
+              class="text-brand hover:underline"
+              >&larr; prev</a
+            >`
+          : raw("")}
+        <span class="text-muted">page ${pageNum} · ${totalCount} total</span>
+        ${hasMore
+          ? html`<a
+              href="/admin/audit?${buildQueryString({ ...fp, page: String(pageNum + 1) })}"
+              class="text-brand hover:underline"
+              >next &rarr;</a
+            >`
+          : raw("")}
+      </div>
+    `;
+
+    const tableWrap = html`
+      <div id="audit-table-wrap">
+        <div class="data-table-wrap mobile-scroll-x">
+          <table class="data-table mobile-table">
+            <thead>
+              <tr>
+                <th class="data-table-th">ID</th>
+                <th class="data-table-th">Method</th>
+                <th class="data-table-th">Path</th>
+                <th class="data-table-th">Actor</th>
+                <th class="data-table-th">Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+        </div>
+        ${paginationHtml}
+      </div>
+    `;
+
+    if (htmx) return c.html(tableWrap.value);
+
+    const selOpts = (list: string[], current: string, all = "all") =>
+      raw(
+        `<option value="">${all}</option>` +
+          list
+            .map(
+              (v) =>
+                `<option value="${escapeAttr(v)}"${current === v ? " selected" : ""}>${escapeAttr(v)}</option>`,
+            )
+            .join(""),
+      );
+
+    const filterBar = html`
+      <form
+        id="audit-filter"
+        class="flex flex-wrap gap-2 mb-4 items-end bg-elevated border border-subtle rounded-lg p-3"
+      >
+        <div class="flex flex-col gap-1">
+          <label class="form-label">Method</label>
+          <select
+            name="method"
+            class="form-select h-9"
+            hx-get="/admin/audit"
+            hx-include="closest form"
+            hx-target="#audit-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="change"
           >
-        </td>
-        <td class="px-3 py-1.5 font-mono text-sm">${r.path}</td>
-        <td class="px-3 py-1.5 text-sm text-muted">${r.actor}</td>
-        <td class="px-3 py-1.5 text-sm">${time(r.created_at)}</td>
-      </tr>`,
-    );
+            ${selOpts(["POST", "PUT", "DELETE"], methodFilter)}
+          </select>
+        </div>
+        <div class="flex flex-col gap-1 flex-1 min-w-36">
+          <label class="form-label">Path search</label>
+          <input
+            type="text"
+            name="path"
+            value="${pathSearch}"
+            placeholder="/admin/api/…"
+            class="form-input"
+            hx-get="/admin/audit"
+            hx-include="closest form"
+            hx-target="#audit-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="input changed delay:400ms"
+          />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">From</label>
+          <input type="date" name="dateFrom" value="${dateFrom}" class="form-input" />
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="form-label">To</label>
+          <input type="date" name="dateTo" value="${dateTo}" class="form-input" />
+        </div>
+        <button
+          type="button"
+          hx-get="/admin/audit"
+          hx-include="closest form"
+          hx-target="#audit-table-wrap"
+          hx-swap="outerHTML"
+          hx-push-url="true"
+          class="btn btn-secondary btn-sm self-end"
+        >
+          Filter
+        </button>
+        ${hasFilter
+          ? html`<a href="/admin/audit" class="btn btn-ghost btn-sm self-end text-muted">Clear</a>`
+          : raw("")}
+      </form>
+    `;
 
     const body = html`
       <div class="flex items-center justify-between mb-4">
-        <h1 class="text-2xl font-bold">Audit Log</h1>
+        <div>
+          <h1 class="text-2xl font-semibold">Audit log</h1>
+          <p class="text-sm text-muted mt-0.5">
+            All POST/PUT/DELETE admin actions are recorded here.
+          </p>
+        </div>
         <div class="flex gap-2">
-          <a
-            href="/admin/api/export/audit.csv"
-            class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
-            >Export CSV</a
-          >
+          <a href="/admin/api/export/audit.csv" class="btn btn-ghost btn-sm">Export CSV</a>
         </div>
       </div>
-      <p class="text-sm text-muted mb-4">All POST/PUT/DELETE admin actions are recorded here.</p>
-      <div class="mobile-scroll-x">
-        <table class="w-full text-sm bg-elevated border rounded shadow-sm mobile-table">
-          <thead class="bg-surface text-secondary text-left text-xs">
-            <tr>
-              <th class="px-3 py-2">ID</th>
-              <th class="px-3 py-2">Method</th>
-              <th class="px-3 py-2">Path</th>
-              <th class="px-3 py-2">Actor</th>
-              <th class="px-3 py-2">Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tableRows}
-          </tbody>
-        </table>
-      </div>
-      ${rows.length === 0
-        ? html`<p class="text-muted text-sm mt-4">No audit entries yet.</p>`
-        : raw("")}
+      ${filterBar} ${tableWrap}
     `;
-    return c.html(
-      page({ title: "Audit", section: "audit", body, isHtmx: isHtmx(c.req.raw.headers) }),
-    );
+    return c.html(page({ title: "Audit", section: "audit", body, isHtmx: false }));
   });
 
   // -------- CSV/JSON exports --------
@@ -3930,6 +4407,55 @@ function taskStatusClass(status: string): string {
   if (status === "pending") return "badge-warning";
   if (status === "error") return "badge-danger";
   return "badge-neutral";
+}
+
+function taskStatusTone(status: string): BadgeTone {
+  if (status === "done") return "success";
+  if (status === "running") return "info";
+  if (status === "pending") return "warning";
+  if (status === "error") return "danger";
+  return "neutral";
+}
+
+function dailyCostSvg(data: { day: string; cost: number }[]): TrustedHtml {
+  if (data.length === 0) {
+    return raw(
+      `<p class="text-muted text-sm py-4 text-center">No cost data in the last 30 days.</p>`,
+    );
+  }
+  const W = 600;
+  const H = 100;
+  const padX = 4;
+  const padTop = 8;
+  const padBottom = 18;
+  const chartH = H - padTop - padBottom;
+  const maxCost = Math.max(...data.map((d) => d.cost), 0.0001);
+  const barSlot = (W - padX * 2) / data.length;
+  const barW = Math.max(2, barSlot - 2);
+
+  const bars = data
+    .map((d, i) => {
+      const x = padX + i * barSlot;
+      const bh = Math.max(2, (d.cost / maxCost) * chartH);
+      const y = padTop + chartH - bh;
+      const title = `${d.day}: $${d.cost.toFixed(4)}`;
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${bh.toFixed(1)}" fill="var(--brand-primary)" rx="1.5" opacity="0.85"><title>${escapeHtml(title)}</title></rect>`;
+    })
+    .join("");
+
+  const step = Math.max(1, Math.ceil(data.length / 6));
+  const labels = data
+    .filter((_, i) => i % step === 0 || i === data.length - 1)
+    .map((d) => {
+      const i = data.indexOf(d);
+      const x = padX + i * barSlot + barW / 2;
+      return `<text x="${x.toFixed(1)}" y="${H - 2}" text-anchor="middle" font-size="9" fill="var(--fg-muted)">${escapeHtml(d.day.slice(5))}</text>`;
+    })
+    .join("");
+
+  return raw(
+    `<svg viewBox="0 0 ${W} ${H}" width="100%" xmlns="http://www.w3.org/2000/svg" style="display:block">${bars}${labels}</svg>`,
+  );
 }
 
 function getProjectRoot(): string {
