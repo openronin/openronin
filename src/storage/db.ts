@@ -207,4 +207,21 @@ function applyMigrations(db: Db): void {
       "INSERT INTO schema_version (version, applied_at) VALUES (10, datetime('now'))",
     ).run();
   }
+
+  if (current < 11) {
+    // Push done tasks that are overdue into the cold bucket so the reconciler
+    // stops re-triaging them immediately. New code prevents this state going forward
+    // by comparing snapshot_hash before enqueueing.
+    db.exec(`
+      UPDATE tasks
+      SET next_due_at = datetime('now', '+24 hours')
+      WHERE status = 'done'
+        AND snapshot_hash IS NOT NULL
+        AND next_due_at IS NOT NULL
+        AND next_due_at < datetime('now', '+12 hours');
+    `);
+    db.prepare(
+      "INSERT INTO schema_version (version, applied_at) VALUES (11, datetime('now'))",
+    ).run();
+  }
 }

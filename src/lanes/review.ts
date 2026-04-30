@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { createHash } from "node:crypto";
 import type { VcsItem } from "../providers/vcs.js";
 import { loadTemplate, renderTemplate } from "../prompts/registry.js";
 import { runJob, type SelectionOverride, type SupervisorContext } from "../supervisor/index.js";
 import { ensureRepo, recordTaskDecision, upsertTask } from "../storage/tasks.js";
+import { computeItemSnapshot } from "../lib/snapshot.js";
 
 export const ReviewDecisionSchema = z.object({
   decision: z.enum(["close", "keep_open"]),
@@ -100,18 +100,7 @@ export async function runReview(input: ReviewRunInput): Promise<ReviewRunOutput>
     decision.comment = "";
   }
 
-  const snapshot = createHash("sha256")
-    .update(
-      JSON.stringify({
-        title: item.title,
-        body: item.body,
-        state: item.state,
-        labels: item.labels,
-        updatedAt: item.updatedAt,
-      }),
-    )
-    .digest("hex")
-    .slice(0, 16);
+  const snapshot = computeItemSnapshot(item);
 
   recordTaskDecision(ctx.db, taskId, snapshot, JSON.stringify(decision));
 

@@ -9,6 +9,7 @@ import { computeNextDueAt } from "./cadence.js";
 import { listPrBranches } from "../storage/pr-branches.js";
 import { isBotMessage } from "../lanes/messages.js";
 import { parseSqliteUtc } from "../lib/time.js";
+import { computeItemSnapshot } from "../lib/snapshot.js";
 
 export interface ReconcileResult {
   repo: string;
@@ -191,19 +192,30 @@ function planTask(
     return false;
   }
 
-  // First scan ever (no snapshot) → high priority, due now.
-  // Past-due → normal priority, due now.
-  // Otherwise leave it.
+  const currentSnapshot = computeItemSnapshot(item);
   const newToUs = !existing.snapshot_hash;
+  const unchanged = existing.snapshot_hash === currentSnapshot;
   const dueNow = !existing.next_due_at || new Date(existing.next_due_at).getTime() <= now.getTime();
 
+  // First scan ever → high priority.
   if (newToUs) {
     enqueue(db, taskId, "high", null);
     return true;
   }
+
   if (dueNow) {
-    enqueue(db, taskId, "normal", computeNextDueAt(item.createdAt, cadence, now));
-    return true;
+    if (!unchanged) {
+      // Content changed → re-triage at normal priority.
+      enqueue(db, taskId, "normal", computeNextDueAt(item.createdAt, cadence, now));
+      return true;
+    }
+    // Content unchanged → push next_due_at forward without enqueueing.
+    db.prepare("UPDATE tasks SET next_due_at = ? WHERE id = ?").run(
+      computeNextDueAt(item.createdAt, cadence, now),
+      taskId,
+    );
+    return false;
   }
+
   return false;
 }
