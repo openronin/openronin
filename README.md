@@ -13,6 +13,7 @@ File issues like you'd brief a remote developer. The agent picks them up, asks f
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/Node-22%2B-green.svg)](https://nodejs.org/)
 [![Status](https://img.shields.io/badge/Status-alpha-orange.svg)]()
+[![GitHub Stars](https://img.shields.io/github/stars/openronin/openronin?color=yellow)](https://github.com/openronin/openronin/stargazers)
 
 </div>
 
