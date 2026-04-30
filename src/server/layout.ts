@@ -80,35 +80,115 @@ export function page(opts: {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(opts.title)} · openronin</title>
+<script>(function(){var t=localStorage.getItem('aidev.dark');var d=t!==null?t==='1':window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches;if(d){document.documentElement.classList.add('dark');document.documentElement.setAttribute('data-theme','dark');}})();</script>
 <script>tailwind.config = { darkMode: 'class' }</script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 <style>
-body{font-family:system-ui,-apple-system,sans-serif}
+/* ─── Design Tokens ─────────────────────────────────────────────────────── */
+:root {
+  --surface-base:     #fafaf9;
+  --surface-elevated: #ffffff;
+  --surface-overlay:  #ffffff;
+  --surface-sunken:   #f1f0ee;
+  --fg-primary:       #1c1917;
+  --fg-secondary:     #57534e;
+  --fg-muted:         #a8a29e;
+  --fg-on-brand:      #ffffff;
+  --border-subtle:    #e7e5e4;
+  --border-strong:    #a8a29e;
+  --brand-primary:       #4f46e5;
+  --brand-primary-hover: #4338ca;
+  --brand-primary-fg:    #ffffff;
+  --status-success-bg:#dcfce7; --status-success-fg:#166534; --status-success-border:#86efac;
+  --status-warning-bg:#fef9c3; --status-warning-fg:#713f12; --status-warning-border:#fde047;
+  --status-danger-bg: #fee2e2; --status-danger-fg: #991b1b; --status-danger-border: #fca5a5;
+  --status-info-bg:   #dbeafe; --status-info-fg:   #1e40af; --status-info-border:   #93c5fd;
+  --status-neutral-bg:#f1f5f9; --status-neutral-fg:#475569; --status-neutral-border:#cbd5e1;
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:24px; --space-6:32px; --space-7:48px;
+  --radius-sm:4px; --radius-md:6px; --radius-lg:8px; --radius-xl:12px;
+  --shadow-1:0 1px 2px 0 rgb(0 0 0/.05);
+  --shadow-2:0 1px 3px 0 rgb(0 0 0/.1),0 1px 2px -1px rgb(0 0 0/.1);
+  --shadow-3:0 4px 6px -1px rgb(0 0 0/.1),0 2px 4px -2px rgb(0 0 0/.1);
+  --z-dropdown:10; --z-sticky:20; --z-modal:50;
+}
+:root[data-theme="dark"] {
+  --surface-base:     #0f1419;
+  --surface-elevated: #15202b;
+  --surface-overlay:  #1c2a38;
+  --surface-sunken:   #0a0e14;
+  --fg-primary:       #e8eaed;
+  --fg-secondary:     #9aa0a6;
+  --fg-muted:         #5f6368;
+  --fg-on-brand:      #ffffff;
+  --border-subtle:    #253341;
+  --border-strong:    #3d5266;
+  --brand-primary:       #818cf8;
+  --brand-primary-hover: #6366f1;
+  --brand-primary-fg:    #ffffff;
+  --status-success-bg:#0d2818; --status-success-fg:#4ade80; --status-success-border:#166534;
+  --status-warning-bg:#2d1f00; --status-warning-fg:#fbbf24; --status-warning-border:#92400e;
+  --status-danger-bg: #2d0f0f; --status-danger-fg: #f87171; --status-danger-border: #991b1b;
+  --status-info-bg:   #0d1d3a; --status-info-fg:   #60a5fa; --status-info-border:   #1e40af;
+  --status-neutral-bg:#1c2937; --status-neutral-fg:#94a3b8; --status-neutral-border:#334155;
+  --shadow-1:0 1px 2px 0 rgb(0 0 0/.3);
+  --shadow-2:0 1px 3px 0 rgb(0 0 0/.4),0 1px 2px -1px rgb(0 0 0/.4);
+  --shadow-3:0 4px 6px -1px rgb(0 0 0/.5),0 2px 4px -2px rgb(0 0 0/.4);
+}
+/* ─── Semantic utilities ──────────────────────────────────────────────────── */
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--surface-base);color:var(--fg-primary)}
 pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-/* Dark mode overrides for server-rendered content */
-.dark .bg-white{background-color:#1e293b!important;color:#e2e8f0}
-.dark .bg-slate-50{background-color:#0f172a!important}
-.dark .text-slate-900,.dark .text-gray-900,.dark .text-slate-800{color:#cbd5e1!important}
-.dark .text-slate-600,.dark .text-slate-700,.dark .text-gray-700{color:#94a3b8!important}
-.dark .text-slate-500{color:#64748b!important}
-.dark .border,.dark .border-slate-200,.dark .border-slate-300{border-color:#334155!important}
-.dark .shadow-sm{box-shadow:0 1px 2px 0 rgb(0 0 0/.5)!important}
-.dark table{border-color:#334155}
-.dark thead,.dark .bg-slate-100{background-color:#1e293b!important}
-.dark tr:hover{background-color:#1e293b}
+.bg-surface   {background:var(--surface-base)}
+.bg-elevated  {background:var(--surface-elevated)}
+.bg-overlay   {background:var(--surface-overlay)}
+.bg-sunken    {background:var(--surface-sunken)}
+.text-primary  {color:var(--fg-primary)}
+.text-secondary{color:var(--fg-secondary)}
+.text-muted    {color:var(--fg-muted)}
+.text-on-brand {color:var(--fg-on-brand)}
+.border-subtle {border-color:var(--border-subtle)}
+.border-strong {border-color:var(--border-strong)}
+.bg-brand      {background:var(--brand-primary);color:var(--brand-primary-fg)}
+.bg-brand:hover{background:var(--brand-primary-hover)}
+.text-brand    {color:var(--brand-primary)}
+.badge-success{background:var(--status-success-bg);color:var(--status-success-fg);border-color:var(--status-success-border)}
+.badge-warning{background:var(--status-warning-bg);color:var(--status-warning-fg);border-color:var(--status-warning-border)}
+.badge-danger {background:var(--status-danger-bg); color:var(--status-danger-fg); border-color:var(--status-danger-border)}
+.badge-info   {background:var(--status-info-bg);   color:var(--status-info-fg);   border-color:var(--status-info-border)}
+.badge-neutral{background:var(--status-neutral-bg);color:var(--status-neutral-fg);border-color:var(--status-neutral-border)}
+.btn-primary  {background:var(--brand-primary);color:var(--brand-primary-fg);border-radius:var(--radius-md);padding:var(--space-2) var(--space-4);font-size:14px;cursor:pointer;border:none;display:inline-block}
+.btn-primary:hover{background:var(--brand-primary-hover)}
+.btn-secondary{background:var(--surface-sunken);color:var(--fg-secondary);border:1px solid var(--border-subtle);border-radius:var(--radius-md);padding:var(--space-2) var(--space-4);font-size:14px;cursor:pointer;display:inline-block}
+.btn-secondary:hover{background:var(--surface-elevated);border-color:var(--border-strong)}
+/* ─── Dark mode: backward-compat overrides ───────────────────────────────── */
+.dark .bg-elevated,.dark .bg-white{background:var(--surface-elevated)!important;color:var(--fg-primary)}
+.dark .bg-surface,.dark .bg-slate-50{background:var(--surface-base)!important}
+.dark .bg-sunken,.dark .bg-slate-100{background:var(--surface-sunken)!important}
+.dark .text-secondary,.dark .text-slate-600,.dark .text-slate-700,.dark .text-gray-700{color:var(--fg-secondary)!important}
+.dark .text-muted,.dark .text-slate-400,.dark .text-slate-500{color:var(--fg-muted)!important}
+.dark .text-primary,.dark .text-slate-900,.dark .text-gray-900,.dark .text-slate-800{color:var(--fg-primary)!important}
+.dark .border-subtle,.dark .border,.dark .border-slate-200,.dark .border-slate-300{border-color:var(--border-subtle)!important}
+.dark .shadow-sm{box-shadow:var(--shadow-1)!important}
+.dark table{border-color:var(--border-subtle)}
+.dark thead{background:var(--surface-sunken)!important}
+.dark tr:hover{background:var(--surface-elevated)}
 .dark input:not([class*="bg-slate"]):not([class*="bg-gray"]),
 .dark textarea:not([class*="bg-slate"]),
 .dark select:not(#tz-select):not(#refresh-rate){
-  background-color:#1e293b;color:#e2e8f0;border-color:#475569
+  background:var(--surface-elevated);color:var(--fg-primary);border-color:var(--border-strong)
 }
+.dark .badge-success{background:var(--status-success-bg);color:var(--status-success-fg);border-color:var(--status-success-border)}
+.dark .badge-warning{background:var(--status-warning-bg);color:var(--status-warning-fg);border-color:var(--status-warning-border)}
+.dark .badge-danger {background:var(--status-danger-bg); color:var(--status-danger-fg); border-color:var(--status-danger-border)}
+.dark .badge-info   {background:var(--status-info-bg);   color:var(--status-info-fg);   border-color:var(--status-info-border)}
+.dark .badge-neutral{background:var(--status-neutral-bg);color:var(--status-neutral-fg);border-color:var(--status-neutral-border)}
 @media(max-width:767px){
   .mobile-scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
   .mobile-table{min-width:600px}
 }
 </style>
 </head>
-<body class="bg-slate-50 dark:bg-slate-950 dark:text-slate-200 min-h-screen">
+<body class="bg-surface text-primary min-h-screen">
 <header class="bg-slate-900 text-white">
   <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-2 flex-wrap">
     <a href="/admin/" class="font-semibold tracking-tight text-lg shrink-0">openronin</a>
@@ -149,26 +229,26 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 
 <!-- Keyboard shortcuts modal -->
 <div id="shortcuts-modal" class="hidden fixed inset-0 z-50 bg-black/60 flex items-start justify-center pt-16 px-4" role="dialog" aria-modal="true">
-  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl p-6 max-w-md w-full">
+  <div class="bg-elevated rounded-xl shadow-2xl p-6 max-w-md w-full border border-subtle">
     <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-semibold dark:text-slate-100">Keyboard shortcuts</h2>
-      <button id="shortcuts-close" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xl leading-none">×</button>
+      <h2 class="text-lg font-semibold text-primary">Keyboard shortcuts</h2>
+      <button id="shortcuts-close" class="text-muted hover:text-secondary text-xl leading-none">×</button>
     </div>
     <table class="w-full text-sm">
       <tbody class="divide-y divide-slate-100 dark:divide-slate-700">
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded w-24">Ctrl/⌘ K</td><td class="py-1.5 pl-3 dark:text-slate-300">Open command palette</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">?</td><td class="py-1.5 pl-3 dark:text-slate-300">This shortcuts overlay</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">g d</td><td class="py-1.5 pl-3 dark:text-slate-300">Go to Dashboard</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">g r</td><td class="py-1.5 pl-3 dark:text-slate-300">Go to Repos</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">g t</td><td class="py-1.5 pl-3 dark:text-slate-300">Go to Tasks</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">g l</td><td class="py-1.5 pl-3 dark:text-slate-300">Go to Logs</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">g c</td><td class="py-1.5 pl-3 dark:text-slate-300">Go to Cost</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">g m</td><td class="py-1.5 pl-3 dark:text-slate-300">Go to Metrics</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">g p</td><td class="py-1.5 pl-3 dark:text-slate-300">Go to Prompts</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">g s</td><td class="py-1.5 pl-3 dark:text-slate-300">Go to Settings</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">g a</td><td class="py-1.5 pl-3 dark:text-slate-300">Go to Audit log</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">j / k</td><td class="py-1.5 pl-3 dark:text-slate-300">Move selection in tables</td></tr>
-        <tr><td class="py-1.5 font-mono text-xs bg-slate-100 dark:bg-slate-700 px-2 rounded">Esc</td><td class="py-1.5 pl-3 dark:text-slate-300">Close modals</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded w-24">Ctrl/⌘ K</td><td class="py-1.5 pl-3 text-secondary">Open command palette</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">?</td><td class="py-1.5 pl-3 text-secondary">This shortcuts overlay</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">g d</td><td class="py-1.5 pl-3 text-secondary">Go to Dashboard</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">g r</td><td class="py-1.5 pl-3 text-secondary">Go to Repos</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">g t</td><td class="py-1.5 pl-3 text-secondary">Go to Tasks</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">g l</td><td class="py-1.5 pl-3 text-secondary">Go to Logs</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">g c</td><td class="py-1.5 pl-3 text-secondary">Go to Cost</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">g m</td><td class="py-1.5 pl-3 text-secondary">Go to Metrics</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">g p</td><td class="py-1.5 pl-3 text-secondary">Go to Prompts</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">g s</td><td class="py-1.5 pl-3 text-secondary">Go to Settings</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">g a</td><td class="py-1.5 pl-3 text-secondary">Go to Audit log</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">j / k</td><td class="py-1.5 pl-3 text-secondary">Move selection in tables</td></tr>
+        <tr><td class="py-1.5 font-mono text-xs bg-sunken px-2 rounded">Esc</td><td class="py-1.5 pl-3 text-secondary">Close modals</td></tr>
       </tbody>
     </table>
   </div>
@@ -176,12 +256,12 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 
 <!-- Command palette -->
 <div id="cmd-palette" class="hidden fixed inset-0 z-50 bg-black/60 flex items-start justify-center pt-24 px-4" role="dialog" aria-modal="true">
-  <div class="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
-    <div class="flex items-center border-b border-slate-200 dark:border-slate-700 px-4">
-      <svg class="text-slate-400 shrink-0 w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+  <div class="bg-elevated rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-subtle">
+    <div class="flex items-center border-b border-subtle px-4">
+      <svg class="text-muted shrink-0 w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
       <input id="cmd-input" type="text" placeholder="Search pages and actions…" autocomplete="off"
-        class="flex-1 px-3 py-3 text-sm outline-none bg-transparent dark:text-slate-100 placeholder-slate-400">
-      <kbd class="text-xs text-slate-400 font-mono">Esc</kbd>
+        class="flex-1 px-3 py-3 text-sm outline-none bg-transparent text-primary placeholder-slate-400">
+      <kbd class="text-xs text-muted font-mono">Esc</kbd>
     </div>
     <div id="cmd-results" class="py-1 max-h-72 overflow-y-auto"></div>
   </div>
@@ -192,7 +272,8 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   // ── Dark mode ──────────────────────────────────────────────────────────────
   var htmlEl = document.documentElement;
   function applyDark(on) {
-    if (on) { htmlEl.classList.add('dark'); } else { htmlEl.classList.remove('dark'); }
+    if (on) { htmlEl.classList.add('dark'); htmlEl.setAttribute('data-theme','dark'); }
+    else    { htmlEl.classList.remove('dark'); htmlEl.removeAttribute('data-theme'); }
     var btn = document.getElementById('dark-toggle');
     if (btn) btn.textContent = on ? '☀' : '🌙';
   }
@@ -329,7 +410,7 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     cmds.forEach(function(cmd, i) {
       var a = document.createElement('a');
       a.href = cmd.href;
-      a.className = 'flex items-center justify-between px-4 py-2 text-sm hover:bg-slate-50 dark:hover:bg-slate-700 dark:text-slate-200 cursor-pointer' + (i === 0 ? ' bg-slate-50 dark:bg-slate-700' : '');
+      a.className = 'flex items-center justify-between px-4 py-2 text-sm hover:bg-surface text-primary cursor-pointer' + (i === 0 ? ' bg-surface' : '');
       var label = document.createElement('span');
       label.textContent = cmd.label;
       var hint = document.createElement('kbd');
@@ -435,16 +516,19 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </script>
 
 <!-- PR side drawer -->
-<div id="pr-drawer" class="fixed inset-y-0 right-0 w-96 bg-white shadow-2xl z-40 transform translate-x-full transition-transform duration-200 overflow-y-auto border-l border-slate-200" aria-hidden="true">
-  <div class="px-4 py-3 border-b flex items-center justify-between sticky top-0 bg-white z-10">
-    <h3 class="font-semibold text-slate-800 text-sm" id="pr-drawer-title">PR Details</h3>
-    <button id="pr-drawer-close" class="text-slate-400 hover:text-slate-700 text-xl leading-none p-1" title="Close (Esc)">&times;</button>
+<div id="pr-drawer" class="fixed inset-y-0 right-0 w-96 bg-elevated shadow-2xl z-40 transform translate-x-full transition-transform duration-200 overflow-y-auto border-l border-subtle" aria-hidden="true">
+  <div class="px-4 py-3 border-b border-subtle flex items-center justify-between sticky top-0 bg-elevated z-10">
+    <h3 class="font-semibold text-primary text-sm" id="pr-drawer-title">PR Details</h3>
+    <button id="pr-drawer-close" class="text-muted hover:text-secondary text-xl leading-none p-1" title="Close (Esc)">&times;</button>
   </div>
-  <div id="pr-drawer-body"><p class="text-slate-400 text-sm p-4">Select a PR row to view details</p></div>
+  <div id="pr-drawer-body"><p class="text-muted text-sm p-4">Select a PR row to view details</p></div>
 </div>
 <div id="pr-drawer-backdrop" class="hidden fixed inset-0 bg-black/20 z-30"></div>
 
 <main class="max-w-6xl mx-auto px-4 py-6">${bodyStr}</main>
+<footer class="max-w-6xl mx-auto px-4 py-3 mt-4 border-t border-subtle">
+  <a href="/admin/_tokens" class="text-xs text-muted hover:text-secondary">design tokens</a>
+</footer>
 </body>
 </html>`;
 }

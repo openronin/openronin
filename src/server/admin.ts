@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { basicAuth } from "hono/basic-auth";
+import { styleguideRoute } from "./styleguide.js";
 import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -50,6 +51,8 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
   if (password) {
     app.use("*", basicAuth({ username: process.env.OPENRONIN_ADMIN_USER ?? "admin", password }));
   }
+
+  app.route("", styleguideRoute());
 
   // -------- Audit middleware: record all mutating admin actions --------
   app.use("*", async (c, next) => {
@@ -184,11 +187,10 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
   // fragment for the dashboard panel. Auto-refreshes via the global
   // ai:refresh trigger.
   app.get("/api/workers", (c) => {
-    if (!scheduler)
-      return c.html(`<div class="text-slate-400 text-sm">scheduler unavailable</div>`);
+    if (!scheduler) return c.html(`<div class="text-muted text-sm">scheduler unavailable</div>`);
     const ws = scheduler.workerStatuses();
     if (ws.length === 0) {
-      return c.html(`<div class="text-slate-500 text-sm">no watched repos</div>`);
+      return c.html(`<div class="text-muted text-sm">no watched repos</div>`);
     }
     const rows = ws
       .map((w) => {
@@ -196,8 +198,8 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
           ? `<span class="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" title="busy"></span>`
           : `<span class="inline-block w-2 h-2 rounded-full bg-slate-300" title="idle"></span>`;
         const last = w.lastFinishedAt
-          ? `<span class="text-xs text-slate-500">last: <time data-ts="${escapeHtml(w.lastFinishedAt)}">${escapeHtml(w.lastFinishedAt)}</time> (${w.lastResultCount ?? 0} task(s))</span>`
-          : `<span class="text-xs text-slate-400">never run</span>`;
+          ? `<span class="text-xs text-muted">last: <time data-ts="${escapeHtml(w.lastFinishedAt)}">${escapeHtml(w.lastFinishedAt)}</time> (${w.lastResultCount ?? 0} task(s))</span>`
+          : `<span class="text-xs text-muted">never run</span>`;
         return `<li class="flex items-center gap-2 py-1">${dot}<code class="text-sm">${escapeHtml(w.repoKey)}</code><span class="ml-auto">${last}</span></li>`;
       })
       .join("");
@@ -322,7 +324,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
     const config = getConfig();
     const list = await fetchActivePrs(db, config).catch(() => [] as ActivePr[]);
     const found = list.find((p) => p.taskId === taskId);
-    if (!found) return c.html("<span class='text-slate-400'>idle</span>");
+    if (!found) return c.html("<span class='text-muted'>idle</span>");
     return c.html(prAwaitingLabel(found).value);
   });
 
@@ -365,7 +367,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
         }
       | undefined;
     if (!branch)
-      return c.html(`<p class="p-4 text-slate-400 text-sm">No PR branch for task #${taskId}</p>`);
+      return c.html(`<p class="p-4 text-muted text-sm">No PR branch for task #${taskId}</p>`);
     const task = db
       .prepare(
         `SELECT t.id, t.external_id, t.kind, r.owner, r.name AS repo_name
@@ -374,7 +376,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
       .get(taskId) as
       | { id: number; external_id: string; kind: string; owner: string; repo_name: string }
       | undefined;
-    if (!task) return c.html(`<p class="p-4 text-slate-400 text-sm">Task not found</p>`);
+    if (!task) return c.html(`<p class="p-4 text-muted text-sm">Task not found</p>`);
     const runs = getRunsByTask(db, taskId);
     const totalCost = runs.reduce((s, r) => s + (r.cost_usd ?? 0), 0);
     const laneOrder = ["analyze", "review", "patch", "pr_dialog", "auto_merge"];
@@ -390,22 +392,22 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
     const drawerBody = html`
       <div class="divide-y text-sm">
         <dl class="grid grid-cols-2 gap-x-3 gap-y-1.5 px-4 py-3 text-xs">
-          <dt class="text-slate-500">Status</dt>
+          <dt class="text-muted">Status</dt>
           <dd>
             <span class="${prStatusClass(branch.status)} px-1.5 py-0.5 rounded text-xs"
               >${branch.status}</span
             >
           </dd>
-          <dt class="text-slate-500">Iterations</dt>
+          <dt class="text-muted">Iterations</dt>
           <dd>${branch.iterations}</dd>
-          <dt class="text-slate-500">Branch</dt>
+          <dt class="text-muted">Branch</dt>
           <dd class="font-mono truncate" title="${branch.branch}">${branch.branch}</dd>
-          <dt class="text-slate-500">Total cost</dt>
+          <dt class="text-muted">Total cost</dt>
           <dd class="font-mono">$${totalCost.toFixed(4)}</dd>
-          <dt class="text-slate-500">Created</dt>
+          <dt class="text-muted">Created</dt>
           <dd>${time(branch.created_at)}</dd>
           ${branch.last_error
-            ? html`<dt class="text-slate-500 text-red-600">Last error</dt>
+            ? html`<dt class="text-muted text-red-600">Last error</dt>
                 <dd class="text-red-700 col-span-1">${branch.last_error.slice(0, 200)}</dd>`
             : raw("")}
         </dl>
@@ -421,12 +423,12 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
           <a
             href="${issueUrl}"
             target="_blank"
-            class="text-xs bg-slate-100 text-slate-800 rounded px-3 py-1.5 hover:bg-slate-200"
+            class="text-xs bg-sunken text-primary rounded px-3 py-1.5 hover:bg-sunken"
             >Issue #${task.external_id} ↗</a
           >
           <a
             href="/admin/tasks/${taskId}"
-            class="text-xs bg-slate-100 text-slate-800 rounded px-3 py-1.5 hover:bg-slate-200"
+            class="text-xs bg-sunken text-primary rounded px-3 py-1.5 hover:bg-sunken"
             >Task detail</a
           >
         </div>
@@ -442,7 +444,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
           </button>
         </div>
         <div class="px-4 py-3">
-          <h4 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+          <h4 class="text-xs font-semibold text-muted uppercase tracking-wide mb-2">
             Lane runs (${runs.length} total)
           </h4>
           ${laneRuns.map((g) => {
@@ -454,13 +456,11 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                 <span class="${runStatusClass(last.status)} text-xs px-1 rounded"
                   >${last.status}</span
                 >
-                <span class="text-xs text-slate-400 ml-auto">$${laneCost.toFixed(4)}</span>
+                <span class="text-xs text-muted ml-auto">$${laneCost.toFixed(4)}</span>
               </div>
               ${g.runs.map(
-                (r) => html`<div
-                  class="flex items-center gap-1.5 text-xs text-slate-500 ml-2 py-0.5"
-                >
-                  <span class="text-slate-300">#${r.id}</span>
+                (r) => html`<div class="flex items-center gap-1.5 text-xs text-muted ml-2 py-0.5">
+                  <span class="text-muted">#${r.id}</span>
                   <span>${r.engine}/${r.model ?? "?"}</span>
                   ${r.tokens_in != null
                     ? html`<span>${r.tokens_in}↑ ${r.tokens_out ?? 0}↓</span>`
@@ -470,9 +470,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
               )}
             </div>`;
           })}
-          ${laneRuns.length === 0
-            ? raw(`<p class="text-slate-400 text-xs">No runs yet</p>`)
-            : raw("")}
+          ${laneRuns.length === 0 ? raw(`<p class="text-muted text-xs">No runs yet</p>`) : raw("")}
         </div>
       </div>
     `;
@@ -549,7 +547,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
           >
             🔓 clear rate-limit
           </button>
-          <span id="dash-busy" class="htmx-indicator text-slate-500">…</span>
+          <span id="dash-busy" class="htmx-indicator text-muted">…</span>
         </div>
       </div>
       <div id="dash-flash" class="mb-4"></div>
@@ -568,12 +566,12 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
       <section class="mb-6">
         <h2 class="text-lg font-semibold mb-2">Workers (per repo)</h2>
         <div
-          class="bg-white border rounded shadow-sm p-3"
+          class="bg-elevated border rounded shadow-sm p-3"
           hx-get="/admin/api/workers"
           hx-trigger="load, ai:refresh from:body"
           hx-swap="innerHTML"
         >
-          <div class="text-slate-400 text-sm">loading…</div>
+          <div class="text-muted text-sm">loading…</div>
         </div>
       </section>
 
@@ -585,7 +583,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
           <ul class="space-y-1">
             ${repos.length === 0
               ? raw(
-                  "<li class='text-slate-500'><em>none yet — </em><a href='/admin/repos' class='text-blue-700 hover:underline'>add one</a></li>",
+                  "<li class='text-muted'><em>none yet — </em><a href='/admin/repos' class='text-blue-700 hover:underline'>add one</a></li>",
                 )
               : repos.map(
                   (r) =>
@@ -600,7 +598,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
         <div>
           <h2 class="text-lg font-semibold mb-2">Recent runs</h2>
           <table class="w-full text-sm">
-            <thead class="text-left text-slate-500">
+            <thead class="text-left text-muted">
               <tr>
                 <th>id</th>
                 <th>started</th>
@@ -612,9 +610,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
             </thead>
             <tbody>
               ${recent.length === 0
-                ? raw(
-                    "<tr><td colspan=6 class='text-slate-500 py-2'><em>no runs yet</em></td></tr>",
-                  )
+                ? raw("<tr><td colspan=6 class='text-muted py-2'><em>no runs yet</em></td></tr>")
                 : recent.map(
                     (r) =>
                       html`<tr class="border-t">
@@ -637,14 +633,14 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
 
       <section class="mt-8">
         <h2 class="text-lg font-semibold mb-2">Active PRs</h2>
-        <p class="text-xs text-slate-500 mb-3">
+        <p class="text-xs text-muted mb-3">
           PRs the agent is watching. ${activePrs.length === 0 ? raw("None — quiet.") : ""}
         </p>
         <div id="active-prs-flash" class="mb-3"></div>
         ${activePrs.length === 0
           ? raw("")
-          : html`<table class="w-full text-sm bg-white border rounded shadow-sm">
-              <thead class="bg-slate-50 text-slate-600 text-left">
+          : html`<table class="w-full text-sm bg-elevated border rounded shadow-sm">
+              <thead class="bg-surface text-secondary text-left">
                 <tr>
                   <th class="px-2 py-2">PR</th>
                   <th class="px-2 py-2">Status</th>
@@ -658,7 +654,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                 ${activePrs.map(
                   (p) => html`
                     <tr
-                      class="border-t hover:bg-slate-50 cursor-pointer"
+                      class="border-t hover:bg-surface cursor-pointer"
                       onclick="openPrDrawer(${p.taskId}, '${p.repo}#${p.prNumber}')"
                       title="Click to view PR details"
                     >
@@ -670,7 +666,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                           onclick="event.stopPropagation()"
                           >${p.repo}#${p.prNumber}</a
                         >
-                        <span class="block text-xs text-slate-500">${p.title}</span>
+                        <span class="block text-xs text-muted">${p.title}</span>
                       </td>
                       <td class="px-2 py-1.5">
                         <span class="${prStatusClass(p.status)} px-1.5 py-0.5 rounded text-xs"
@@ -678,14 +674,14 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                         >
                       </td>
                       <td class="px-2 py-1.5 text-xs">${p.iterations}/${p.maxIterations}</td>
-                      <td class="px-2 py-1.5 text-xs text-slate-500">${p.lastTouched ?? "—"}</td>
+                      <td class="px-2 py-1.5 text-xs text-muted">${p.lastTouched ?? "—"}</td>
                       <td
                         class="px-2 py-1.5 text-xs"
                         hx-get="/admin/api/active-prs/${p.taskId}/awaiting"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                       >
-                        <span class="text-slate-400">…</span>
+                        <span class="text-muted">…</span>
                       </td>
                       <td class="px-2 py-1.5 text-right">
                         <button
@@ -708,13 +704,13 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
             <h2 class="text-lg font-semibold mb-2 text-red-700">
               ⛔ Blocked patches (${blockedPatches.length})
             </h2>
-            <p class="text-xs text-slate-500 mb-3">
+            <p class="text-xs text-muted mb-3">
               Patch attempts blocked by guardrails. Fix the root cause, then click Override to
               retry.
             </p>
             <div id="blocked-patches-flash" class="mb-3"></div>
-            <table class="w-full text-sm bg-white border rounded shadow-sm">
-              <thead class="bg-slate-50 text-slate-600 text-left">
+            <table class="w-full text-sm bg-elevated border rounded shadow-sm">
+              <thead class="bg-surface text-secondary text-left">
                 <tr>
                   <th class="px-2 py-2">Issue</th>
                   <th class="px-2 py-2">Branch</th>
@@ -730,11 +726,11 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                       <td class="px-2 py-1.5 text-xs">
                         ${b.owner}/${b.repo_name}#${b.external_id}
                       </td>
-                      <td class="px-2 py-1.5 text-xs font-mono text-slate-600">${b.branch}</td>
+                      <td class="px-2 py-1.5 text-xs font-mono text-secondary">${b.branch}</td>
                       <td class="px-2 py-1.5 text-xs text-red-700">
                         ${b.last_error ? b.last_error.slice(0, 120) : "unknown"}
                       </td>
-                      <td class="px-2 py-1.5 text-xs text-slate-500">
+                      <td class="px-2 py-1.5 text-xs text-muted">
                         ${time(b.updated_at ?? b.created_at)}
                       </td>
                       <td class="px-2 py-1.5 text-right">
@@ -759,8 +755,8 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
       ${jiraTasks.length > 0
         ? html`<section class="mt-8">
             <h2 class="text-lg font-semibold mb-2">Pending Jira tasks (${jiraTasks.length})</h2>
-            <table class="w-full text-sm bg-white border rounded shadow-sm">
-              <thead class="bg-slate-50 text-slate-600 text-left">
+            <table class="w-full text-sm bg-elevated border rounded shadow-sm">
+              <thead class="bg-surface text-secondary text-left">
                 <tr>
                   <th class="px-2 py-2">Issue</th>
                   <th class="px-2 py-2">Repo</th>
@@ -774,17 +770,15 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                   (t) =>
                     html`<tr class="border-t">
                       <td class="px-2 py-1.5 font-mono text-sm">${t.external_id}</td>
-                      <td class="px-2 py-1.5 text-xs text-slate-500">${t.owner}/${t.repo_name}</td>
+                      <td class="px-2 py-1.5 text-xs text-muted">${t.owner}/${t.repo_name}</td>
                       <td class="px-2 py-1.5">
                         <span class="${taskStatusClass(t.status)} px-1.5 py-0.5 rounded text-xs"
                           >${t.status}</span
                         >
                       </td>
-                      <td class="px-2 py-1.5 text-xs text-slate-500">${time(t.last_run_at)}</td>
+                      <td class="px-2 py-1.5 text-xs text-muted">${time(t.last_run_at)}</td>
                       <td
-                        class="px-2 py-1.5 text-xs ${t.last_error
-                          ? "text-red-700"
-                          : "text-slate-400"}"
+                        class="px-2 py-1.5 text-xs ${t.last_error ? "text-red-700" : "text-muted"}"
                       >
                         ${t.last_error ? t.last_error.slice(0, 80) : ""}
                       </td>
@@ -799,8 +793,8 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
             <h2 class="text-lg font-semibold mb-2">
               Pending Todoist tasks (${todoistTasks.length})
             </h2>
-            <table class="w-full text-sm bg-white border rounded shadow-sm">
-              <thead class="bg-slate-50 text-slate-600 text-left">
+            <table class="w-full text-sm bg-elevated border rounded shadow-sm">
+              <thead class="bg-surface text-secondary text-left">
                 <tr>
                   <th class="px-2 py-2">Task ID</th>
                   <th class="px-2 py-2">Repo</th>
@@ -814,17 +808,15 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                   (t) =>
                     html`<tr class="border-t">
                       <td class="px-2 py-1.5 font-mono text-sm">${t.external_id}</td>
-                      <td class="px-2 py-1.5 text-xs text-slate-500">${t.owner}/${t.repo_name}</td>
+                      <td class="px-2 py-1.5 text-xs text-muted">${t.owner}/${t.repo_name}</td>
                       <td class="px-2 py-1.5">
                         <span class="${taskStatusClass(t.status)} px-1.5 py-0.5 rounded text-xs"
                           >${t.status}</span
                         >
                       </td>
-                      <td class="px-2 py-1.5 text-xs text-slate-500">${time(t.last_run_at)}</td>
+                      <td class="px-2 py-1.5 text-xs text-muted">${time(t.last_run_at)}</td>
                       <td
-                        class="px-2 py-1.5 text-xs ${t.last_error
-                          ? "text-red-700"
-                          : "text-slate-400"}"
+                        class="px-2 py-1.5 text-xs ${t.last_error ? "text-red-700" : "text-muted"}"
                       >
                         ${t.last_error ? t.last_error.slice(0, 80) : ""}
                       </td>
@@ -835,7 +827,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
           </section>`
         : raw("")}
 
-      <p class="text-xs text-slate-500 mt-6">
+      <p class="text-xs text-muted mt-6">
         dataDir: <code>${config.dataDir}</code> &middot; baseUrl:
         <code>${config.global.server.baseUrl}</code>
       </p>
@@ -850,10 +842,10 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
     const rows = listRepos(db, { watchedOnly: false });
     const list: TrustedHtml | TrustedHtml[] =
       rows.length === 0
-        ? raw("<tr><td colspan=3 class='py-3 text-slate-500'><em>no repos yet</em></td></tr>")
+        ? raw("<tr><td colspan=3 class='py-3 text-muted'><em>no repos yet</em></td></tr>")
         : rows.map(
             (r) => html`
-              <tr class="border-t hover:bg-slate-50">
+              <tr class="border-t hover:bg-surface">
                 <td class="py-2">
                   <a href="/admin/repos/${r.id}" class="text-blue-700 hover:underline"
                     >${r.provider}:${r.owner}/${r.name}</a
@@ -862,7 +854,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                 <td class="py-2">
                   ${r.watched
                     ? raw("<span class='text-green-700'>watched</span>")
-                    : raw("<span class='text-slate-400'>archived</span>")}
+                    : raw("<span class='text-muted'>archived</span>")}
                 </td>
                 <td class="py-2 text-right">
                   <button
@@ -881,7 +873,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
       <h1 class="text-2xl font-semibold mb-4">Repos</h1>
       <div id="flash" class="mb-3"></div>
 
-      <section class="bg-white rounded shadow-sm border p-4 mb-6">
+      <section class="bg-elevated rounded shadow-sm border p-4 mb-6">
         <h2 class="font-medium mb-3">Add a repo</h2>
         <form
           hx-post="/admin/repos"
@@ -917,9 +909,9 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
         </form>
       </section>
 
-      <section class="bg-white rounded shadow-sm border">
+      <section class="bg-elevated rounded shadow-sm border">
         <table class="w-full text-sm">
-          <thead class="bg-slate-50 text-slate-600 text-left">
+          <thead class="bg-surface text-secondary text-left">
             <tr>
               <th class="px-3 py-2">Repo</th>
               <th class="px-3 py-2">Status</th>
@@ -985,21 +977,21 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
         <a href="/admin/repos" class="text-blue-700 hover:underline text-sm">&larr; Repos</a>
         <a
           href="/admin/repos/${id}/dashboard"
-          class="text-xs px-2 py-1 rounded border border-slate-300 hover:bg-slate-100"
+          class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
           >Dashboard</a
         >
         <a
           href="/admin/repos/${id}/deploys"
-          class="text-xs px-2 py-1 rounded border border-slate-300 hover:bg-slate-100"
+          class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
           >Deploys</a
         >
       </div>
       <h1 class="text-2xl font-semibold mb-4">${row.provider}:${row.owner}/${row.name}</h1>
       <div id="flash" class="mb-3"></div>
 
-      <section class="bg-white rounded shadow-sm border p-4 mb-6">
+      <section class="bg-elevated rounded shadow-sm border p-4 mb-6">
         <h2 class="font-medium mb-2">Configuration (YAML)</h2>
-        <p class="text-xs text-slate-500 mb-2">
+        <p class="text-xs text-muted mb-2">
           Saves to <code>${yamlPath}</code> and triggers config reload.
         </p>
         <form hx-post="/admin/repos/${id}" hx-target="#flash">
@@ -1017,7 +1009,7 @@ ${yamlText}</textarea
               type="button"
               hx-post="/admin/api/repos/${id}/connect-webhook"
               hx-target="#flash"
-              class="bg-slate-200 rounded px-4 py-2 text-sm"
+              class="bg-sunken rounded px-4 py-2 text-sm"
               title="Auto: creates a webhook via the GitHub API. Requires admin permission on the repo."
             >
               Connect webhook (auto)
@@ -1027,7 +1019,7 @@ ${yamlText}</textarea
               hx-get="/admin/api/repos/${id}/webhook-info"
               hx-target="#webhook-info"
               hx-swap="innerHTML"
-              class="bg-slate-200 rounded px-4 py-2 text-sm"
+              class="bg-sunken rounded px-4 py-2 text-sm"
               title="For private personal repos where the bot can't create webhooks via API"
             >
               Show manual setup info
@@ -1036,7 +1028,7 @@ ${yamlText}</textarea
               type="button"
               hx-post="/admin/api/repos/${id}/ensure-labels"
               hx-target="#flash"
-              class="bg-slate-200 rounded px-4 py-2 text-sm"
+              class="bg-sunken rounded px-4 py-2 text-sm"
               title="Verify the agent's trigger / in-progress labels exist; create them if missing"
             >
               Verify / create labels (auto)
@@ -1046,7 +1038,7 @@ ${yamlText}</textarea
               hx-get="/admin/api/repos/${id}/labels-info"
               hx-target="#labels-info"
               hx-swap="innerHTML"
-              class="bg-slate-200 rounded px-4 py-2 text-sm"
+              class="bg-sunken rounded px-4 py-2 text-sm"
               title="For private repos where the bot can't create labels via API"
             >
               Show manual label setup
@@ -1057,9 +1049,9 @@ ${yamlText}</textarea
         </form>
       </section>
 
-      <section class="bg-white rounded shadow-sm border p-4">
+      <section class="bg-elevated rounded shadow-sm border p-4">
         <h2 class="font-medium mb-2">Deployment</h2>
-        <p class="text-xs text-slate-500 mb-3">
+        <p class="text-xs text-muted mb-3">
           Configure <code>deploy.mode</code> (local | ssh), <code>deploy.commands</code> and (for
           ssh) <code>deploy.ssh.host</code> + <code>deploy.ssh.key_path</code>
           in the repo config above. Then use the buttons here.
@@ -1081,7 +1073,7 @@ ${yamlText}</textarea
             hx-get="/admin/api/deploy/ssh-public-key"
             hx-target="#deploy-info"
             hx-swap="innerHTML"
-            class="bg-slate-200 rounded px-4 py-2 text-sm"
+            class="bg-sunken rounded px-4 py-2 text-sm"
             title="Bot's SSH public key for ~/.ssh/authorized_keys on the deploy target"
           >
             Show SSH public key
@@ -1091,17 +1083,17 @@ ${yamlText}</textarea
             hx-get="/admin/api/deploy/config-example"
             hx-target="#deploy-info"
             hx-swap="innerHTML"
-            class="bg-slate-200 rounded px-4 py-2 text-sm"
+            class="bg-sunken rounded px-4 py-2 text-sm"
             title="Annotated YAML examples for local + ssh deploy modes"
           >
             Show config example
           </button>
-          <span id="deploy-busy" class="htmx-indicator text-slate-500 self-center">…</span>
+          <span id="deploy-busy" class="htmx-indicator text-muted self-center">…</span>
         </div>
         <div id="deploy-info" class="mt-3"></div>
       </section>
 
-      <section class="bg-white rounded shadow-sm border p-4">
+      <section class="bg-elevated rounded shadow-sm border p-4">
         <h2 class="font-medium mb-2">Run review now</h2>
         <form
           hx-post="/admin/api/repos/${id}/review-now"
@@ -1213,9 +1205,7 @@ ${yamlText}</textarea
     }>;
     const body = html`
       <div class="mb-4 flex items-center gap-3">
-        <a href="/admin/repos/${id}" class="text-sm text-slate-500 hover:underline"
-          >← Repo config</a
-        >
+        <a href="/admin/repos/${id}" class="text-sm text-muted hover:underline">← Repo config</a>
         <h1 class="text-2xl font-semibold">${row.owner}/${row.name} · Dashboard</h1>
       </div>
 
@@ -1227,24 +1217,24 @@ ${yamlText}</textarea
       </div>
 
       <div class="grid grid-cols-2 gap-6 mb-6">
-        <section class="bg-white rounded shadow-sm border p-4">
+        <section class="bg-elevated rounded shadow-sm border p-4">
           <div class="flex items-center justify-between mb-3">
             <h2 class="font-semibold text-sm">Recent runs</h2>
-            <span class="text-xs text-slate-400">cost 24h: $${cost24h.toFixed(4)}</span>
+            <span class="text-xs text-muted">cost 24h: $${cost24h.toFixed(4)}</span>
           </div>
           <table class="w-full text-xs">
             <tbody>
               ${recentRuns.length === 0
-                ? raw(`<tr><td class="py-2 text-slate-400">No runs yet</td></tr>`)
+                ? raw(`<tr><td class="py-2 text-muted">No runs yet</td></tr>`)
                 : recentRuns.map(
                     (r) => html`<tr class="border-t">
-                      <td class="py-1 text-slate-400">#${r.id}</td>
+                      <td class="py-1 text-muted">#${r.id}</td>
                       <td class="py-1">${r.lane}</td>
                       <td class="py-1">
                         <span class="${runStatusClass(r.status)} px-1 rounded">${r.status}</span>
                       </td>
-                      <td class="py-1 text-slate-500">${time(r.started_at)}</td>
-                      <td class="py-1 text-slate-400">
+                      <td class="py-1 text-muted">${time(r.started_at)}</td>
+                      <td class="py-1 text-muted">
                         ${r.cost_usd != null ? "$" + r.cost_usd.toFixed(4) : "—"}
                       </td>
                     </tr>`,
@@ -1254,12 +1244,12 @@ ${yamlText}</textarea
         </section>
 
         <div class="space-y-4">
-          <section class="bg-white rounded shadow-sm border p-4">
+          <section class="bg-elevated rounded shadow-sm border p-4">
             <div class="flex items-center justify-between mb-2">
               <h2 class="font-semibold text-sm">Active PRs (${activePrBranches.length})</h2>
             </div>
             ${activePrBranches.length === 0
-              ? raw(`<p class="text-slate-400 text-xs">None</p>`)
+              ? raw(`<p class="text-muted text-xs">None</p>`)
               : html`<ul class="space-y-1">
                   ${activePrBranches.map(
                     (b) => html`<li class="text-xs flex items-center gap-2">
@@ -1272,7 +1262,7 @@ ${yamlText}</textarea
                           >`
                         : html`<span>PR #${b.pr_number ?? "?"}</span>`}
                       <span class="${prStatusClass(b.status)} px-1.5 rounded">${b.status}</span>
-                      <span class="text-slate-400">${b.iterations} iter</span>
+                      <span class="text-muted">${b.iterations} iter</span>
                       <button
                         onclick="openPrDrawer(${b.task_id}, 'PR #${b.pr_number}')"
                         class="ml-auto text-xs text-blue-600 hover:underline"
@@ -1284,7 +1274,7 @@ ${yamlText}</textarea
                 </ul>`}
           </section>
 
-          <section class="bg-white rounded shadow-sm border p-4">
+          <section class="bg-elevated rounded shadow-sm border p-4">
             <div class="flex items-center justify-between mb-2">
               <h2 class="font-semibold text-sm">Recent deploys</h2>
               <a href="/admin/repos/${id}/deploys" class="text-xs text-blue-700 hover:underline"
@@ -1292,7 +1282,7 @@ ${yamlText}</textarea
               >
             </div>
             ${deploys.length === 0
-              ? raw(`<p class="text-slate-400 text-xs">No deploys yet</p>`)
+              ? raw(`<p class="text-muted text-xs">No deploys yet</p>`)
               : html`<table class="w-full text-xs">
                   <tbody>
                     ${deploys.map(
@@ -1301,14 +1291,14 @@ ${yamlText}</textarea
                         <td class="py-1">
                           <span
                             class="${d.status === "ok"
-                              ? "bg-green-100 text-green-800"
+                              ? "badge-success"
                               : d.status === "running"
-                                ? "bg-blue-100 text-blue-800"
-                                : "bg-red-100 text-red-800"} px-1 rounded"
+                                ? "badge-info"
+                                : "badge-danger"} px-1 rounded"
                             >${d.status}</span
                           >
                         </td>
-                        <td class="py-1 text-slate-500">${time(d.started_at)}</td>
+                        <td class="py-1 text-muted">${time(d.started_at)}</td>
                         ${d.status === "error"
                           ? html`<td class="py-1 text-red-600 max-w-xs truncate">
                               ${d.error ?? ""}
@@ -1354,14 +1344,12 @@ ${yamlText}</textarea
     }>;
     const body = html`
       <div class="mb-4 flex items-center gap-3">
-        <a href="/admin/repos/${id}" class="text-sm text-slate-500 hover:underline"
-          >← Repo config</a
-        >
+        <a href="/admin/repos/${id}" class="text-sm text-muted hover:underline">← Repo config</a>
         <h1 class="text-2xl font-semibold">${row.owner}/${row.name} · Deploys</h1>
       </div>
-      <section class="bg-white rounded shadow-sm border">
+      <section class="bg-elevated rounded shadow-sm border">
         <table class="w-full text-sm">
-          <thead class="bg-slate-50 text-slate-600 text-left text-xs">
+          <thead class="bg-surface text-secondary text-left text-xs">
             <tr>
               <th class="px-3 py-2">SHA</th>
               <th class="px-3 py-2">Branch</th>
@@ -1375,7 +1363,7 @@ ${yamlText}</textarea
           <tbody>
             ${deploys.length === 0
               ? raw(
-                  "<tr><td colspan=7 class='py-4 text-slate-400 text-center text-sm'>No deploys yet</td></tr>",
+                  "<tr><td colspan=7 class='py-4 text-muted text-center text-sm'>No deploys yet</td></tr>",
                 )
               : deploys.map((d) => {
                   const norm = (ts: string) => ts.replace(" ", "T") + (/[zZ]$/.test(ts) ? "" : "Z");
@@ -1390,19 +1378,19 @@ ${yamlText}</textarea
                   return html`<tr class="border-t">
                     <td class="px-3 py-2 font-mono text-xs">${d.sha.slice(0, 8)}</td>
                     <td class="px-3 py-2 text-xs">${d.branch}</td>
-                    <td class="px-3 py-2 text-xs text-slate-500">${d.triggered_by}</td>
+                    <td class="px-3 py-2 text-xs text-muted">${d.triggered_by}</td>
                     <td class="px-3 py-2">
                       <span
                         class="${d.status === "ok"
-                          ? "bg-green-100 text-green-800"
+                          ? "badge-success"
                           : d.status === "running"
-                            ? "bg-blue-100 text-blue-800"
-                            : "bg-red-100 text-red-800"} px-1.5 py-0.5 rounded text-xs"
+                            ? "badge-info"
+                            : "badge-danger"} px-1.5 py-0.5 rounded text-xs"
                         >${d.status}</span
                       >
                     </td>
                     <td class="px-3 py-2 text-xs">${time(d.started_at)}</td>
-                    <td class="px-3 py-2 text-xs text-slate-400">${dur}</td>
+                    <td class="px-3 py-2 text-xs text-muted">${dur}</td>
                     <td class="px-3 py-2 text-xs text-red-700 max-w-xs truncate">
                       ${d.error ?? ""}
                     </td>
@@ -1478,12 +1466,12 @@ ${yamlText}</textarea
     const items = keys
       .map(
         (k) => `
-        <div class="bg-white border rounded p-2 mb-2">
-          <div class="text-xs text-slate-500 mb-1">
+        <div class="bg-elevated border rounded p-2 mb-2">
+          <div class="text-xs text-muted mb-1">
             <code>${escapeHtml(k.file)}</code>
-            <span class="text-slate-400">— private key path on this server: <code>${escapeHtml(resolve(sshDir, k.file.replace(/\\.pub$/, "")))}</code></span>
+            <span class="text-muted">— private key path on this server: <code>${escapeHtml(resolve(sshDir, k.file.replace(/\\.pub$/, "")))}</code></span>
           </div>
-          <code class="text-xs select-all break-all block bg-slate-50 p-2 rounded">${escapeHtml(k.content)}</code>
+          <code class="text-xs select-all break-all block bg-surface p-2 rounded">${escapeHtml(k.content)}</code>
         </div>`,
       )
       .join("");
@@ -1491,7 +1479,7 @@ ${yamlText}</textarea
       `<div class="bg-blue-50 border border-blue-200 rounded p-3 text-sm space-y-2">
         <p class="text-blue-900">Скопируй ключ ниже и добавь его в <code>~/.ssh/authorized_keys</code> на target-сервере (на пользователя, под которым деплоить). Затем в repo config укажи <code>deploy.ssh.key_path</code> = путь к приватному ключу на этом сервере.</p>
         ${items}
-        <p class="text-xs text-slate-500">Чтобы сгенерировать новый ключ: <code>sudo -u claude ssh-keygen -t ed25519 -f ${escapeHtml(sshDir)}/id_NEWNAME_ed25519 -N ''</code></p>
+        <p class="text-xs text-muted">Чтобы сгенерировать новый ключ: <code>sudo -u claude ssh-keygen -t ed25519 -f ${escapeHtml(sshDir)}/id_NEWNAME_ed25519 -N ''</code></p>
       </div>`,
     );
   });
@@ -1718,9 +1706,7 @@ ${yamlText}</textarea
           `${r.status === "failed" ? "❌" : r.status === "created" ? "🆕" : "✅"} <code>${escapeHtml(r.name)}</code> — ${r.status}${r.reason ? ` (${escapeHtml(r.reason)})` : ""}`,
       )
       .join("<br>");
-    const cls = ok
-      ? "bg-green-100 text-green-800 border-green-300"
-      : "bg-red-100 text-red-800 border-red-300";
+    const cls = ok ? "badge-success border" : "badge-danger border";
     return c.html(`<div class="border rounded px-3 py-2 text-sm ${cls}">${lines}</div>`);
   });
 
@@ -1842,34 +1828,32 @@ ${yamlText}</textarea
     }>;
     const list: TrustedHtml | TrustedHtml[] =
       rows.length === 0
-        ? raw("<tr><td colspan=8 class='py-3 text-slate-500 px-2'><em>no tasks yet</em></td></tr>")
+        ? raw("<tr><td colspan=8 class='py-3 text-muted px-2'><em>no tasks yet</em></td></tr>")
         : rows.map((t) => {
             const decision = t.decision_json ? safeJson(t.decision_json) : null;
             const decisionLabel = decision?.decision
               ? html`<span
-                  class="text-xs ${decision.decision === "close"
-                    ? "text-amber-700"
-                    : "text-slate-500"}"
+                  class="text-xs ${decision.decision === "close" ? "text-amber-700" : "text-muted"}"
                   >${decision.decision}/${decision.close_reason ?? ""}</span
                 >`
               : raw("");
             return html`
-              <tr class="border-t hover:bg-slate-50">
+              <tr class="border-t hover:bg-surface">
                 <td class="py-1.5 px-2">
                   <a href="/admin/tasks/${t.id}" class="text-blue-700 hover:underline font-medium"
                     >${t.owner}/${t.repo_name}#${t.external_id}</a
                   >
                 </td>
-                <td class="py-1.5 px-2"><span class="text-xs text-slate-500">${t.kind}</span></td>
+                <td class="py-1.5 px-2"><span class="text-xs text-muted">${t.kind}</span></td>
                 <td class="py-1.5 px-2">
                   <span class="${taskStatusClass(t.status)} px-1.5 py-0.5 rounded text-xs"
                     >${t.status}</span
                   >
                 </td>
-                <td class="py-1.5 px-2 text-xs text-slate-500">${t.priority}</td>
-                <td class="py-1.5 px-2 text-xs text-slate-500">${time(t.last_run_at)}</td>
+                <td class="py-1.5 px-2 text-xs text-muted">${t.priority}</td>
+                <td class="py-1.5 px-2 text-xs text-muted">${time(t.last_run_at)}</td>
                 <td class="py-1.5 px-2">${decisionLabel}</td>
-                <td class="py-1.5 px-2 text-xs ${t.last_error ? "text-red-700" : "text-slate-400"}">
+                <td class="py-1.5 px-2 text-xs ${t.last_error ? "text-red-700" : "text-muted"}">
                   ${t.last_error ? t.last_error.slice(0, 80) : ""}
                 </td>
                 <td class="py-1.5 px-2 text-right">
@@ -1893,19 +1877,19 @@ ${yamlText}</textarea
         <div class="flex gap-2">
           <a
             href="/admin/api/export/tasks.csv"
-            class="text-xs px-2 py-1 rounded border border-slate-300 hover:bg-slate-100"
+            class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
             >CSV</a
           >
           <a
             href="/admin/api/export/tasks.json"
-            class="text-xs px-2 py-1 rounded border border-slate-300 hover:bg-slate-100"
+            class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
             >JSON</a
           >
         </div>
       </div>
-      <section class="bg-white rounded shadow-sm border">
+      <section class="bg-elevated rounded shadow-sm border">
         <table class="w-full text-sm">
-          <thead class="bg-slate-50 text-slate-600 text-left">
+          <thead class="bg-surface text-secondary text-left">
             <tr>
               <th class="px-2 py-2">Item</th>
               <th class="px-2 py-2">Kind</th>
@@ -2004,15 +1988,15 @@ ${yamlText}</textarea
                 entry.type === "system"
                   ? "bg-purple-100 text-purple-800"
                   : entry.type === "user"
-                    ? "bg-blue-100 text-blue-800"
-                    : "bg-green-100 text-green-800";
+                    ? "badge-info"
+                    : "badge-success";
               return html`
                 <div class="mb-3">
                   <span class="text-xs font-semibold px-1.5 py-0.5 rounded ${labelColor}"
                     >${entry.type}</span
                   >
                   <pre
-                    class="mt-1 text-xs bg-slate-50 border rounded p-2 overflow-x-auto whitespace-pre-wrap"
+                    class="mt-1 text-xs bg-surface border rounded p-2 overflow-x-auto whitespace-pre-wrap"
                   >
 ${entry.content}</pre
                   >
@@ -2024,10 +2008,10 @@ ${entry.content}</pre
           promptContent = raw(`<p class="text-xs text-red-600">Failed to read prompt log</p>`);
         }
       } else if (run.prompt_log_path) {
-        promptContent = raw(`<p class="text-xs text-slate-400">Log file not found</p>`);
+        promptContent = raw(`<p class="text-xs text-muted">Log file not found</p>`);
       } else {
         promptContent = raw(
-          `<p class="text-xs text-slate-400">No prompt log recorded for this run</p>`,
+          `<p class="text-xs text-muted">No prompt log recorded for this run</p>`,
         );
       }
 
@@ -2035,33 +2019,33 @@ ${entry.content}</pre
         <div class="border rounded mb-2">
           <details>
             <summary
-              class="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-slate-50 select-none"
+              class="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-surface select-none"
             >
-              <span class="text-xs font-mono text-slate-500">#${run.id}</span>
+              <span class="text-xs font-mono text-muted">#${run.id}</span>
               <span class="text-xs font-semibold">${run.lane}</span>
-              <span class="text-xs text-slate-500"
+              <span class="text-xs text-muted"
                 >${run.engine}${run.model ? html` / ${run.model}` : raw("")}</span
               >
               <span class="${runStatusClass(run.status)} text-xs px-1.5 py-0.5 rounded"
                 >${run.status}</span
               >
               ${durationSec !== null
-                ? html`<span class="text-xs text-slate-400">${durationSec}s</span>`
+                ? html`<span class="text-xs text-muted">${durationSec}s</span>`
                 : raw("")}
               ${run.tokens_in !== null
-                ? html`<span class="text-xs text-slate-400"
+                ? html`<span class="text-xs text-muted"
                     >${run.tokens_in}↑ ${run.tokens_out ?? 0}↓</span
                   >`
                 : raw("")}
               ${run.cost_usd !== null
-                ? html`<span class="text-xs text-slate-400">$${run.cost_usd.toFixed(4)}</span>`
+                ? html`<span class="text-xs text-muted">$${run.cost_usd.toFixed(4)}</span>`
                 : raw("")}
               ${run.error
                 ? html`<span class="text-xs text-red-600 truncate max-w-xs">${run.error}</span>`
                 : raw("")}
-              <span class="ml-auto text-xs text-slate-400">${time(run.started_at)}</span>
+              <span class="ml-auto text-xs text-muted">${time(run.started_at)}</span>
             </summary>
-            <div class="px-3 py-3 border-t bg-white">${promptContent}</div>
+            <div class="px-3 py-3 border-t bg-elevated">${promptContent}</div>
           </details>
         </div>
       `;
@@ -2094,8 +2078,8 @@ ${entry.content}</pre
     const timelineHtml =
       laneSummary.length > 0
         ? html`
-            <section class="bg-white rounded shadow-sm border p-4 mb-4">
-              <h2 class="font-semibold text-xs text-slate-500 uppercase tracking-wide mb-3">
+            <section class="bg-elevated rounded shadow-sm border p-4 mb-4">
+              <h2 class="font-semibold text-xs text-muted uppercase tracking-wide mb-3">
                 Lane timeline
               </h2>
               <div class="flex items-start gap-1 flex-wrap">
@@ -2109,18 +2093,16 @@ ${entry.content}</pre
                           ? "bg-blue-50 border-blue-300 text-blue-900"
                           : "bg-amber-50 border-amber-300 text-amber-900";
                   return html`${i > 0
-                      ? raw(`<div class="self-center text-slate-300 text-sm mt-1">→</div>`)
+                      ? raw(`<div class="self-center text-muted text-sm mt-1">→</div>`)
                       : raw("")}
                     <div class="border rounded px-3 py-2 text-xs ${bg} min-w-20">
                       <div class="font-semibold">${step.lane}</div>
-                      <div class="text-slate-500">
-                        ${step.count} run${step.count > 1 ? "s" : ""}
-                      </div>
+                      <div class="text-muted">${step.count} run${step.count > 1 ? "s" : ""}</div>
                       ${step.totalCost > 0
                         ? html`<div>$${step.totalCost.toFixed(4)}</div>`
                         : raw("")}
                       ${step.durMs > 0
-                        ? html`<div class="text-slate-400">${(step.durMs / 1000).toFixed(0)}s</div>`
+                        ? html`<div class="text-muted">${(step.durMs / 1000).toFixed(0)}s</div>`
                         : raw("")}
                     </div>`;
                 })}
@@ -2131,7 +2113,7 @@ ${entry.content}</pre
 
     const body = html`
       <div class="flex items-center gap-3 mb-4">
-        <a href="/admin/tasks" class="text-sm text-slate-500 hover:underline">← Tasks</a>
+        <a href="/admin/tasks" class="text-sm text-muted hover:underline">← Tasks</a>
         <h1 class="text-2xl font-semibold">
           Task #${task.id} · ${task.owner}/${task.repo_name}#${task.external_id}
         </h1>
@@ -2140,37 +2122,37 @@ ${entry.content}</pre
       ${timelineHtml}
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        <section class="bg-white rounded shadow-sm border p-4">
-          <h2 class="font-semibold text-sm text-slate-600 uppercase tracking-wide mb-3">
+        <section class="bg-elevated rounded shadow-sm border p-4">
+          <h2 class="font-semibold text-sm text-secondary uppercase tracking-wide mb-3">
             Metadata
           </h2>
           <dl class="text-sm grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-            <dt class="text-slate-500">Repo</dt>
+            <dt class="text-muted">Repo</dt>
             <dd>${task.owner}/${task.repo_name}</dd>
-            <dt class="text-slate-500">Kind</dt>
+            <dt class="text-muted">Kind</dt>
             <dd>${task.kind}</dd>
-            <dt class="text-slate-500">External ID</dt>
+            <dt class="text-muted">External ID</dt>
             <dd>
               <a href="${issueUrl}" target="_blank" class="text-blue-700 hover:underline"
                 >${task.external_id}</a
               >
             </dd>
-            <dt class="text-slate-500">Status</dt>
+            <dt class="text-muted">Status</dt>
             <dd>
               <span class="${taskStatusClass(task.status)} px-1.5 py-0.5 rounded text-xs"
                 >${task.status}</span
               >
             </dd>
-            <dt class="text-slate-500">Priority</dt>
+            <dt class="text-muted">Priority</dt>
             <dd>${task.priority}</dd>
-            <dt class="text-slate-500">Source</dt>
+            <dt class="text-muted">Source</dt>
             <dd>${task.source}</dd>
-            <dt class="text-slate-500">Next due</dt>
+            <dt class="text-muted">Next due</dt>
             <dd>${time(task.next_due_at)}</dd>
-            <dt class="text-slate-500">Last run</dt>
+            <dt class="text-muted">Last run</dt>
             <dd>${time(task.last_run_at)}</dd>
             ${task.last_error
-              ? html`<dt class="text-slate-500">Last error</dt>
+              ? html`<dt class="text-muted">Last error</dt>
                   <dd class="text-red-700 text-xs">${task.last_error}</dd>`
               : raw("")}
           </dl>
@@ -2187,26 +2169,26 @@ ${entry.content}</pre
           </div>
         </section>
 
-        <section class="bg-white rounded shadow-sm border p-4">
-          <h2 class="font-semibold text-sm text-slate-600 uppercase tracking-wide mb-3">
+        <section class="bg-elevated rounded shadow-sm border p-4">
+          <h2 class="font-semibold text-sm text-secondary uppercase tracking-wide mb-3">
             Decision JSON
           </h2>
           ${decisionPretty
             ? html`<pre
-                class="text-xs bg-slate-50 border rounded p-2 overflow-auto max-h-64 whitespace-pre-wrap"
+                class="text-xs bg-surface border rounded p-2 overflow-auto max-h-64 whitespace-pre-wrap"
               >
 ${decisionPretty}</pre
               >`
-            : raw(`<p class="text-sm text-slate-400 italic">No decision recorded</p>`)}
+            : raw(`<p class="text-sm text-muted italic">No decision recorded</p>`)}
         </section>
       </div>
 
-      <section class="bg-white rounded shadow-sm border p-4">
-        <h2 class="font-semibold text-sm text-slate-600 uppercase tracking-wide mb-3">
+      <section class="bg-elevated rounded shadow-sm border p-4">
+        <h2 class="font-semibold text-sm text-secondary uppercase tracking-wide mb-3">
           Runs (${runs.length})
         </h2>
         ${runs.length === 0
-          ? raw(`<p class="text-sm text-slate-400 italic">No runs yet</p>`)
+          ? raw(`<p class="text-sm text-muted italic">No runs yet</p>`)
           : html`${runRows}`}
       </section>
     `;
@@ -2264,12 +2246,12 @@ ${decisionPretty}</pre
 
     function groupTable(rows: { key: string; cost: number; runs: number }[]): TrustedHtml {
       if (rows.length === 0)
-        return raw("<tr><td colspan=3 class='py-2 text-slate-400 text-xs'>no data</td></tr>");
+        return raw("<tr><td colspan=3 class='py-2 text-muted text-xs'>no data</td></tr>");
       return html`${rows.map(
         (r) => html`<tr class="border-t">
           <td class="py-1.5 px-2 text-sm">${r.key}</td>
           <td class="py-1.5 px-2 text-sm font-mono">$${r.cost.toFixed(4)}</td>
-          <td class="py-1.5 px-2 text-sm text-slate-500">${r.runs}</td>
+          <td class="py-1.5 px-2 text-sm text-muted">${r.runs}</td>
         </tr>`,
       )}`;
     }
@@ -2278,39 +2260,39 @@ ${decisionPretty}</pre
       <h1 class="text-2xl font-semibold mb-6">Cost</h1>
 
       <section class="grid grid-cols-2 gap-4 mb-6">
-        <div class="bg-white rounded shadow-sm border p-4">
-          <p class="text-sm text-slate-500 mb-1">Last 24 hours</p>
+        <div class="bg-elevated rounded shadow-sm border p-4">
+          <p class="text-sm text-muted mb-1">Last 24 hours</p>
           <p class="text-3xl font-semibold font-mono ${textColor}">$${cost24h.toFixed(4)}</p>
         </div>
-        <div class="bg-white rounded shadow-sm border p-4">
-          <p class="text-sm text-slate-500 mb-1">All time</p>
+        <div class="bg-elevated rounded shadow-sm border p-4">
+          <p class="text-sm text-muted mb-1">All time</p>
           <p class="text-3xl font-semibold font-mono">$${costTotal.toFixed(4)}</p>
         </div>
       </section>
 
-      <section class="bg-white rounded shadow-sm border p-4 mb-6">
+      <section class="bg-elevated rounded shadow-sm border p-4 mb-6">
         <div class="flex justify-between text-sm mb-1">
           <span class="font-medium">Daily cap usage</span>
           <span class="${textColor} font-mono">
             $${cost24h.toFixed(4)} / $${perDayUsd.toFixed(2)} (${pct.toFixed(1)}%)
           </span>
         </div>
-        <div class="w-full bg-slate-200 rounded h-4 overflow-hidden">
+        <div class="w-full bg-sunken rounded h-4 overflow-hidden">
           <div
             class="${barColor} h-4 rounded transition-all"
             style="width:${pct.toFixed(2)}%"
           ></div>
         </div>
         ${perDayUsd <= 0
-          ? html`<p class="text-xs text-slate-400 mt-1">No daily cap configured.</p>`
+          ? html`<p class="text-xs text-muted mt-1">No daily cap configured.</p>`
           : raw("")}
       </section>
 
       <section class="grid grid-cols-3 gap-4">
-        <div class="bg-white rounded shadow-sm border">
-          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-slate-50">By lane (24h)</h2>
+        <div class="bg-elevated rounded shadow-sm border">
+          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">By lane (24h)</h2>
           <table class="w-full text-sm">
-            <thead class="text-left text-slate-500 text-xs">
+            <thead class="text-left text-muted text-xs">
               <tr>
                 <th class="px-2 py-1">Lane</th>
                 <th class="px-2 py-1">Cost</th>
@@ -2322,10 +2304,10 @@ ${decisionPretty}</pre
             </tbody>
           </table>
         </div>
-        <div class="bg-white rounded shadow-sm border">
-          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-slate-50">By engine (24h)</h2>
+        <div class="bg-elevated rounded shadow-sm border">
+          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">By engine (24h)</h2>
           <table class="w-full text-sm">
-            <thead class="text-left text-slate-500 text-xs">
+            <thead class="text-left text-muted text-xs">
               <tr>
                 <th class="px-2 py-1">Engine</th>
                 <th class="px-2 py-1">Cost</th>
@@ -2337,10 +2319,10 @@ ${decisionPretty}</pre
             </tbody>
           </table>
         </div>
-        <div class="bg-white rounded shadow-sm border">
-          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-slate-50">By repo (24h)</h2>
+        <div class="bg-elevated rounded shadow-sm border">
+          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">By repo (24h)</h2>
           <table class="w-full text-sm">
-            <thead class="text-left text-slate-500 text-xs">
+            <thead class="text-left text-muted text-xs">
               <tr>
                 <th class="px-2 py-1">Repo</th>
                 <th class="px-2 py-1">Cost</th>
@@ -2376,31 +2358,31 @@ ${decisionPretty}</pre
       <h1 class="text-2xl font-semibold mb-6">Metrics</h1>
 
       <div class="grid grid-cols-2 gap-6 mb-6">
-        <div class="bg-white rounded shadow-sm border p-4">
-          <h2 class="text-sm font-semibold mb-3 text-slate-700">Tasks / day (last 30 days)</h2>
+        <div class="bg-elevated rounded shadow-sm border p-4">
+          <h2 class="text-sm font-semibold mb-3 text-secondary">Tasks / day (last 30 days)</h2>
           <canvas id="chart-tasks-day"></canvas>
         </div>
-        <div class="bg-white rounded shadow-sm border p-4">
-          <h2 class="text-sm font-semibold mb-3 text-slate-700">
+        <div class="bg-elevated rounded shadow-sm border p-4">
+          <h2 class="text-sm font-semibold mb-3 text-secondary">
             Token usage trend (last 30 days)
           </h2>
           <canvas id="chart-tokens"></canvas>
         </div>
       </div>
 
-      <div class="bg-white rounded shadow-sm border p-4 mb-6">
-        <h2 class="text-sm font-semibold mb-3 text-slate-700">
+      <div class="bg-elevated rounded shadow-sm border p-4 mb-6">
+        <h2 class="text-sm font-semibold mb-3 text-secondary">
           Success rate by lane (per week, last 12 weeks)
         </h2>
         <canvas id="chart-success-rate"></canvas>
       </div>
 
-      <div class="bg-white rounded shadow-sm border mb-6">
-        <h2 class="text-sm font-semibold px-3 py-2 border-b bg-slate-50">
+      <div class="bg-elevated rounded shadow-sm border mb-6">
+        <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">
           Avg engine latency by model (last 30 days)
         </h2>
         <table class="w-full text-sm">
-          <thead class="text-left text-slate-500 text-xs bg-slate-50">
+          <thead class="text-left text-muted text-xs bg-surface">
             <tr>
               <th class="px-3 py-2">Model</th>
               <th class="px-3 py-2">Engine</th>
@@ -2410,7 +2392,7 @@ ${decisionPretty}</pre
           </thead>
           <tbody id="latency-table">
             <tr>
-              <td colspan="4" class="px-3 py-4 text-slate-400 text-xs">Loading…</td>
+              <td colspan="4" class="px-3 py-4 text-muted text-xs">Loading…</td>
             </tr>
           </tbody>
         </table>
@@ -2476,15 +2458,15 @@ ${decisionPretty}</pre
 
       var tbody = document.getElementById('latency-table');
       if (!d.latency.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="px-3 py-4 text-slate-400 text-xs">no data</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="px-3 py-4 text-muted text-xs">no data</td></tr>';
       } else {
         tbody.innerHTML = d.latency.map(function(r) {
           var secs = r.avg_seconds != null ? r.avg_seconds.toFixed(1) + 's' : '—';
           return '<tr class="border-t">' +
             '<td class="px-3 py-2 text-sm font-mono">' + r.model + '</td>' +
-            '<td class="px-3 py-2 text-sm text-slate-500">' + r.engine + '</td>' +
+            '<td class="px-3 py-2 text-sm text-muted">' + r.engine + '</td>' +
             '<td class="px-3 py-2 text-sm font-mono">' + secs + '</td>' +
-            '<td class="px-3 py-2 text-sm text-slate-500">' + r.runs + '</td></tr>';
+            '<td class="px-3 py-2 text-sm text-muted">' + r.runs + '</td></tr>';
         }).join('');
       }
     })
@@ -2532,37 +2514,37 @@ ${decisionPretty}</pre
     const filterForm = html`
       <form method="get" action="/admin/logs" class="flex flex-wrap gap-2 mb-4 items-end">
         <div class="flex flex-col text-xs">
-          <label class="text-slate-500 mb-0.5">Lane</label>
+          <label class="text-muted mb-0.5">Lane</label>
           <select name="lane" class="border rounded px-1 py-0.5 text-sm">
             ${selOpts(distincts.lanes, filter.lane)}
           </select>
         </div>
         <div class="flex flex-col text-xs">
-          <label class="text-slate-500 mb-0.5">Engine</label>
+          <label class="text-muted mb-0.5">Engine</label>
           <select name="engine" class="border rounded px-1 py-0.5 text-sm">
             ${selOpts(distincts.engines, filter.engine)}
           </select>
         </div>
         <div class="flex flex-col text-xs">
-          <label class="text-slate-500 mb-0.5">Model</label>
+          <label class="text-muted mb-0.5">Model</label>
           <select name="model" class="border rounded px-1 py-0.5 text-sm">
             ${selOpts(distincts.models, filter.model)}
           </select>
         </div>
         <div class="flex flex-col text-xs">
-          <label class="text-slate-500 mb-0.5">Status</label>
+          <label class="text-muted mb-0.5">Status</label>
           <select name="status" class="border rounded px-1 py-0.5 text-sm">
             ${selOpts(["ok", "error", "running"], filter.status)}
           </select>
         </div>
         <div class="flex flex-col text-xs">
-          <label class="text-slate-500 mb-0.5">Repo</label>
+          <label class="text-muted mb-0.5">Repo</label>
           <select name="repo" class="border rounded px-1 py-0.5 text-sm">
             ${selOpts(distincts.repos, filter.repo)}
           </select>
         </div>
         <div class="flex flex-col text-xs">
-          <label class="text-slate-500 mb-0.5">From</label>
+          <label class="text-muted mb-0.5">From</label>
           <input
             type="date"
             name="dateFrom"
@@ -2571,7 +2553,7 @@ ${decisionPretty}</pre
           />
         </div>
         <div class="flex flex-col text-xs">
-          <label class="text-slate-500 mb-0.5">To</label>
+          <label class="text-muted mb-0.5">To</label>
           <input
             type="date"
             name="dateTo"
@@ -2580,7 +2562,7 @@ ${decisionPretty}</pre
           />
         </div>
         <div class="flex flex-col text-xs flex-1 min-w-40">
-          <label class="text-slate-500 mb-0.5">Error search</label>
+          <label class="text-muted mb-0.5">Error search</label>
           <input
             type="text"
             name="errorSearch"
@@ -2595,20 +2577,20 @@ ${decisionPretty}</pre
         >
           Filter
         </button>
-        <a href="/admin/logs" class="text-slate-500 text-sm hover:underline self-end pb-1">reset</a>
+        <a href="/admin/logs" class="text-muted text-sm hover:underline self-end pb-1">reset</a>
       </form>
     `;
 
     const tableRows =
       rows.length === 0
         ? raw(
-            "<tr><td colspan='8' class='text-slate-500 py-4 text-center'><em>no runs match</em></td></tr>",
+            "<tr><td colspan='8' class='text-muted py-4 text-center'><em>no runs match</em></td></tr>",
           )
         : rows.map(
             (r) => html`
-              <tr class="border-t hover:bg-slate-50">
+              <tr class="border-t hover:bg-surface">
                 <td class="px-2 py-1">#${r.id}</td>
-                <td class="px-2 py-1 text-xs text-slate-500 whitespace-nowrap">
+                <td class="px-2 py-1 text-xs text-muted whitespace-nowrap">
                   ${time(r.started_at)}
                 </td>
                 <td class="px-2 py-1 text-xs">${r.lane}</td>
@@ -2627,7 +2609,7 @@ ${decisionPretty}</pre
                 </td>
               </tr>
               ${r.log_path
-                ? html`<tr class="border-b bg-slate-50">
+                ? html`<tr class="border-b bg-surface">
                     <td colspan="8" class="px-2 pb-1">
                       <details>
                         <summary
@@ -2639,7 +2621,7 @@ ${decisionPretty}</pre
                           hx-get="/admin/api/runs/${r.id}/log"
                           hx-trigger="intersect once"
                           hx-swap="outerHTML"
-                          class="text-xs text-slate-400 py-1"
+                          class="text-xs text-muted py-1"
                         >
                           loading…
                         </div>
@@ -2647,7 +2629,7 @@ ${decisionPretty}</pre
                     </td>
                   </tr>`
                 : html`<tr class="border-b">
-                    <td colspan="8" class="px-2 pb-1 text-xs text-slate-400">
+                    <td colspan="8" class="px-2 pb-1 text-xs text-muted">
                       ${r.error ? r.error : raw("<em>no log file</em>")}
                     </td>
                   </tr>`}
@@ -2663,7 +2645,7 @@ ${decisionPretty}</pre
               >&larr; prev</a
             >`
           : raw("")}
-        <span class="text-slate-500">page ${page_}</span>
+        <span class="text-muted">page ${page_}</span>
         ${hasMore
           ? html`<a
               href="/admin/logs?${buildQueryString({ ...filter, page: String(page_ + 1) })}"
@@ -2680,20 +2662,20 @@ ${decisionPretty}</pre
         <div class="flex gap-2">
           <a
             href="/admin/api/export/runs.csv"
-            class="text-xs px-2 py-1 rounded border border-slate-300 hover:bg-slate-100"
+            class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
             >CSV</a
           >
           <a
             href="/admin/api/export/runs.json"
-            class="text-xs px-2 py-1 rounded border border-slate-300 hover:bg-slate-100"
+            class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
             >JSON</a
           >
         </div>
       </div>
       ${filterForm}
       <div class="overflow-x-auto">
-        <table class="w-full text-sm bg-white border rounded shadow-sm">
-          <thead class="bg-slate-50 text-slate-600 text-left text-xs">
+        <table class="w-full text-sm bg-elevated border rounded shadow-sm">
+          <thead class="bg-surface text-secondary text-left text-xs">
             <tr>
               <th class="px-2 py-2">id</th>
               <th class="px-2 py-2">started</th>
@@ -2723,13 +2705,12 @@ ${decisionPretty}</pre
     if (!Number.isFinite(id)) return c.html("<span class='text-red-500'>bad id</span>", 400);
 
     const run = getRunById(db, id);
-    if (!run) return c.html("<span class='text-slate-400'>run not found</span>");
-    if (!run.log_path)
-      return c.html("<span class='text-slate-400'>no log file for this run</span>");
+    if (!run) return c.html("<span class='text-muted'>run not found</span>");
+    if (!run.log_path) return c.html("<span class='text-muted'>no log file for this run</span>");
 
     if (!existsSync(run.log_path))
       return c.html(
-        `<span class='text-slate-400'>log file missing: ${escapeHtml(run.log_path)}</span>`,
+        `<span class='text-muted'>log file missing: ${escapeHtml(run.log_path)}</span>`,
       );
 
     const lines = readFileSync(run.log_path, "utf8")
@@ -2745,7 +2726,7 @@ ${decisionPretty}</pre
       .filter(Boolean) as Record<string, unknown>[];
 
     if (lines.length === 0 || !lines[0])
-      return c.html("<span class='text-slate-400'>empty log file</span>");
+      return c.html("<span class='text-muted'>empty log file</span>");
 
     const entry = lines[0];
     const fmtPre = (label: string, val: unknown) => {
@@ -2753,9 +2734,9 @@ ${decisionPretty}</pre
       const text = typeof val === "string" ? val : JSON.stringify(val, null, 2);
       return html`
         <div class="mt-2">
-          <div class="font-semibold text-slate-600 mb-0.5">${label}</div>
+          <div class="font-semibold text-secondary mb-0.5">${label}</div>
           <pre
-            class="bg-slate-100 rounded p-2 overflow-x-auto text-xs whitespace-pre-wrap break-words max-h-64 overflow-y-auto"
+            class="bg-sunken rounded p-2 overflow-x-auto text-xs whitespace-pre-wrap break-words max-h-64 overflow-y-auto"
           >
 ${text}</pre
           >
@@ -2764,7 +2745,7 @@ ${text}</pre
     };
 
     const meta = html`
-      <div class="flex flex-wrap gap-4 text-xs text-slate-600 mb-1">
+      <div class="flex flex-wrap gap-4 text-xs text-secondary mb-1">
         <span>timestamp: ${entry.timestamp as string}</span>
         <span>duration: ${entry.duration_ms as number}ms</span>
         ${entry.tokens_in != null
@@ -2804,7 +2785,7 @@ ${text}</pre
 
     const list: TrustedHtml | TrustedHtml[] =
       builtins.length === 0
-        ? raw("<li class='text-slate-500'>none</li>")
+        ? raw("<li class='text-muted'>none</li>")
         : builtins.map(
             (n) =>
               html`<li>
@@ -2817,11 +2798,11 @@ ${text}</pre
           );
     const overrideList: TrustedHtml | TrustedHtml[] =
       overrides.length === 0
-        ? raw("<li class='text-slate-500'>none</li>")
+        ? raw("<li class='text-muted'>none</li>")
         : overrides.map(
             (n) =>
               html`<li>
-                <span class="text-slate-700">${n}</span>
+                <span class="text-secondary">${n}</span>
                 <a
                   href="/admin/prompts/${encodeURIComponent(n.replace(/\.md$/, ""))}?override=1"
                   class="text-blue-700 hover:underline text-xs"
@@ -2833,18 +2814,18 @@ ${text}</pre
     const body = html`
       <h1 class="text-2xl font-semibold mb-4">Prompts</h1>
       <div class="grid grid-cols-2 gap-6">
-        <section class="bg-white rounded shadow-sm border p-4">
+        <section class="bg-elevated rounded shadow-sm border p-4">
           <h2 class="font-medium mb-2">Built-in templates</h2>
-          <p class="text-xs text-slate-500 mb-2">
+          <p class="text-xs text-muted mb-2">
             Repo-tracked. Click to view; saving creates an override at the same key.
           </p>
           <ul class="space-y-1">
             ${list}
           </ul>
         </section>
-        <section class="bg-white rounded shadow-sm border p-4">
+        <section class="bg-elevated rounded shadow-sm border p-4">
           <h2 class="font-medium mb-2">Active overrides</h2>
-          <p class="text-xs text-slate-500 mb-2">Stored at <code>${overrideDir}</code>.</p>
+          <p class="text-xs text-muted mb-2">Stored at <code>${overrideDir}</code>.</p>
           <ul class="space-y-1">
             ${overrideList}
           </ul>
@@ -2876,7 +2857,7 @@ ${text}</pre
         <a href="/admin/prompts" class="text-blue-700 hover:underline">&larr; Prompts</a>
       </div>
       <h1 class="text-2xl font-semibold mb-2">${key}</h1>
-      <p class="text-xs text-slate-500 mb-4">
+      <p class="text-xs text-muted mb-4">
         Builtin: <code>${builtinPath}</code>${builtinExists ? "" : " (missing)"} · Override:
         <code>${overridePath}</code> ${overrideExists ? "(active)" : "(none)"}
       </p>
@@ -2942,7 +2923,7 @@ ${text}</textarea
     const text = existsSync(path) ? readFileSync(path, "utf8") : "";
     const body = html`
       <h1 class="text-2xl font-semibold mb-4">Settings</h1>
-      <p class="text-xs text-slate-500 mb-4">
+      <p class="text-xs text-muted mb-4">
         Global config at <code>${path}</code> — fs.watch reloads on save.
       </p>
       <div id="flash" class="mb-3"></div>
@@ -2998,22 +2979,18 @@ ${text}</textarea
     }[];
 
     const methodClass = (m: string) =>
-      m === "POST"
-        ? "bg-green-100 text-green-800"
-        : m === "DELETE"
-          ? "bg-red-100 text-red-800"
-          : "bg-blue-100 text-blue-800";
+      m === "POST" ? "badge-success" : m === "DELETE" ? "badge-danger" : "badge-info";
 
     const tableRows = rows.map(
       (r) => html`<tr class="border-t">
-        <td class="px-3 py-1.5 text-xs text-slate-400 font-mono">${String(r.id)}</td>
+        <td class="px-3 py-1.5 text-xs text-muted font-mono">${String(r.id)}</td>
         <td class="px-3 py-1.5">
           <span class="${methodClass(r.method)} px-1.5 py-0.5 rounded text-xs font-mono"
             >${r.method}</span
           >
         </td>
         <td class="px-3 py-1.5 font-mono text-sm">${r.path}</td>
-        <td class="px-3 py-1.5 text-sm text-slate-500">${r.actor}</td>
+        <td class="px-3 py-1.5 text-sm text-muted">${r.actor}</td>
         <td class="px-3 py-1.5 text-sm">${time(r.created_at)}</td>
       </tr>`,
     );
@@ -3024,17 +3001,15 @@ ${text}</textarea
         <div class="flex gap-2">
           <a
             href="/admin/api/export/audit.csv"
-            class="text-xs px-2 py-1 rounded border border-slate-300 hover:bg-slate-100"
+            class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
             >Export CSV</a
           >
         </div>
       </div>
-      <p class="text-sm text-slate-500 mb-4">
-        All POST/PUT/DELETE admin actions are recorded here.
-      </p>
+      <p class="text-sm text-muted mb-4">All POST/PUT/DELETE admin actions are recorded here.</p>
       <div class="mobile-scroll-x">
-        <table class="w-full text-sm bg-white border rounded shadow-sm mobile-table">
-          <thead class="bg-slate-50 text-slate-600 text-left text-xs">
+        <table class="w-full text-sm bg-elevated border rounded shadow-sm mobile-table">
+          <thead class="bg-surface text-secondary text-left text-xs">
             <tr>
               <th class="px-3 py-2">ID</th>
               <th class="px-3 py-2">Method</th>
@@ -3049,7 +3024,7 @@ ${text}</textarea
         </table>
       </div>
       ${rows.length === 0
-        ? html`<p class="text-slate-400 text-sm mt-4">No audit entries yet.</p>`
+        ? html`<p class="text-muted text-sm mt-4">No audit entries yet.</p>`
         : raw("")}
     `;
     return c.html(
@@ -3213,7 +3188,7 @@ function recentErrorsPanel(db: Db): TrustedHtml {
           html`<li class="flex items-start gap-2">
             <span class="text-red-600 mt-0.5">●</span>
             <div class="flex-1">
-              <div class="text-xs text-slate-500">
+              <div class="text-xs text-muted">
                 <a href="/admin/tasks/${e.task_id}" class="text-blue-700 hover:underline"
                   >task #${e.task_id}</a
                 >
@@ -3233,23 +3208,20 @@ function recentErrorsPanel(db: Db): TrustedHtml {
 
 function statCard(label: string, value: number, color = "slate"): TrustedHtml {
   const valueColor: Record<string, string> = {
-    slate: "text-slate-800",
-    blue: "text-blue-800",
-    green: "text-green-800",
-    yellow: "text-amber-800",
-    red: "text-red-800",
+    slate: "text-primary",
+    blue: "badge-info",
+    green: "badge-success",
+    yellow: "badge-warning",
+    red: "badge-danger",
   };
-  return html`<div class="rounded shadow-sm border bg-white p-3">
-    <div class="text-xs uppercase tracking-wide text-slate-500">${label}</div>
-    <div class="text-2xl font-semibold ${valueColor[color] ?? ""}">${value}</div>
+  return html`<div class="rounded shadow-sm border border-subtle bg-elevated p-3">
+    <div class="text-xs uppercase tracking-wide text-muted">${label}</div>
+    <div class="text-2xl font-semibold ${valueColor[color] ?? "text-primary"}">${value}</div>
   </div>`;
 }
 
 function flash(kind: "ok" | "error", message: string): string {
-  const cls =
-    kind === "ok"
-      ? "bg-green-100 text-green-800 border-green-300"
-      : "bg-red-100 text-red-800 border-red-300";
+  const cls = kind === "ok" ? "badge-success" : "badge-danger";
   return html`<div class="border rounded px-3 py-2 text-sm ${cls}">${message}</div>`.toString();
 }
 
@@ -3314,7 +3286,7 @@ deploy:
       <pre
         class="bg-slate-900 text-slate-100 p-3 rounded text-xs overflow-x-auto select-all mt-2"
       ><code>${localExample}</code></pre>
-      <p class="text-xs text-slate-600 mt-1">
+      <p class="text-xs text-secondary mt-1">
         Pre-req: пользователю <code>claude</code> должен быть прописан sudoers-entry для
         <code>systemctl --no-block restart &lt;service&gt;</code> (см.
         <code>/etc/sudoers.d/openronin-deploy</code>).
@@ -3326,7 +3298,7 @@ deploy:
       <pre
         class="bg-slate-900 text-slate-100 p-3 rounded text-xs overflow-x-auto select-all mt-2"
       ><code>${sshExample}</code></pre>
-      <ol class="text-xs text-slate-600 mt-2 space-y-1 list-decimal list-inside">
+      <ol class="text-xs text-secondary mt-2 space-y-1 list-decimal list-inside">
         <li>Нажми «Show SSH public key» — скопируй открытый ключ.</li>
         <li>
           На target-сервере под нужным пользователем добавь его в
@@ -3397,24 +3369,24 @@ function webhookInfoPanel(
       >. Это обходной путь для приватных репозиториев, где у бота нет admin-прав.
     </p>
     <dl class="grid grid-cols-[120px_1fr] gap-y-1 gap-x-2">
-      <dt class="text-slate-600">Payload URL</dt>
+      <dt class="text-secondary">Payload URL</dt>
       <dd>
-        <code class="bg-white px-1.5 py-0.5 rounded select-all break-all">${callback}</code>
+        <code class="bg-elevated px-1.5 py-0.5 rounded select-all break-all">${callback}</code>
       </dd>
-      <dt class="text-slate-600">Content type</dt>
-      <dd><code class="bg-white px-1.5 py-0.5 rounded">application/json</code></dd>
-      <dt class="text-slate-600">Secret</dt>
+      <dt class="text-secondary">Content type</dt>
+      <dd><code class="bg-elevated px-1.5 py-0.5 rounded">application/json</code></dd>
+      <dt class="text-secondary">Secret</dt>
       <dd>
-        <code class="bg-white px-1.5 py-0.5 rounded select-all break-all">${secret}</code>
+        <code class="bg-elevated px-1.5 py-0.5 rounded select-all break-all">${secret}</code>
       </dd>
-      <dt class="text-slate-600">SSL</dt>
-      <dd><span class="text-slate-700">Enable verification (recommended)</span></dd>
-      <dt class="text-slate-600">Events</dt>
+      <dt class="text-secondary">SSL</dt>
+      <dd><span class="text-secondary">Enable verification (recommended)</span></dd>
+      <dt class="text-secondary">Events</dt>
       <dd>
-        <span class="text-slate-700">«Let me select individual events»: ${events}</span>
+        <span class="text-secondary">«Let me select individual events»: ${events}</span>
       </dd>
-      <dt class="text-slate-600">Active</dt>
-      <dd><span class="text-slate-700">checked</span></dd>
+      <dt class="text-secondary">Active</dt>
+      <dd><span class="text-secondary">checked</span></dd>
     </dl>
     <div class="flex gap-2 pt-1 text-xs">
       <button
@@ -3456,7 +3428,7 @@ function labelInfoPanel(
     <ul class="space-y-2">
       ${labels.map(
         (l) =>
-          html`<li class="bg-white rounded p-2 border">
+          html`<li class="bg-elevated rounded p-2 border">
             <div class="flex items-baseline gap-2 flex-wrap">
               <span
                 class="inline-block rounded px-2 py-0.5 text-xs font-mono"
@@ -3464,9 +3436,9 @@ function labelInfoPanel(
                 >${l.name}</span
               >
               <code class="text-xs select-all">${l.name}</code>
-              <span class="text-slate-400 text-xs">color #${l.color}</span>
+              <span class="text-muted text-xs">color #${l.color}</span>
             </div>
-            <div class="text-xs text-slate-600 mt-1">${l.description}</div>
+            <div class="text-xs text-secondary mt-1">${l.description}</div>
             <div class="text-xs mt-1">
               <a
                 target="_blank"
@@ -3478,7 +3450,7 @@ function labelInfoPanel(
           </li>`,
       )}
     </ul>
-    <p class="text-xs text-slate-600">
+    <p class="text-xs text-secondary">
       После создания нажми «Verify / create labels» — бот пере-проверит и поймёт, что они уже есть.
     </p>
   </div>`;
@@ -3539,18 +3511,18 @@ export function pauseControl(paused: boolean, reason?: string): string {
 }
 
 function runStatusClass(status: string): string {
-  if (status === "ok") return "bg-green-100 text-green-800";
-  if (status === "running") return "bg-blue-100 text-blue-800";
-  if (status === "error") return "bg-red-100 text-red-800";
-  return "bg-slate-100 text-slate-700";
+  if (status === "ok") return "badge-success";
+  if (status === "running") return "badge-info";
+  if (status === "error") return "badge-danger";
+  return "badge-neutral";
 }
 
 function taskStatusClass(status: string): string {
-  if (status === "done") return "bg-green-100 text-green-800";
-  if (status === "running") return "bg-blue-100 text-blue-800";
-  if (status === "pending") return "bg-amber-100 text-amber-800";
-  if (status === "error") return "bg-red-100 text-red-800";
-  return "bg-slate-100 text-slate-700";
+  if (status === "done") return "badge-success";
+  if (status === "running") return "badge-info";
+  if (status === "pending") return "badge-warning";
+  if (status === "error") return "badge-danger";
+  return "badge-neutral";
 }
 
 function getProjectRoot(): string {
@@ -3726,11 +3698,11 @@ async function fetchActivePrs(db: Db, config: RuntimeConfig): Promise<ActivePr[]
 }
 
 function prStatusClass(status: string): string {
-  if (status === "open") return "bg-green-100 text-green-800";
-  if (status === "needs_human") return "bg-amber-100 text-amber-800";
-  if (status === "guardrail_blocked" || status === "dirty") return "bg-red-100 text-red-800";
-  if (status === "closed") return "bg-slate-100 text-slate-700";
-  return "bg-slate-100 text-slate-700";
+  if (status === "open") return "badge-success";
+  if (status === "needs_human") return "badge-warning";
+  if (status === "guardrail_blocked" || status === "dirty") return "badge-danger";
+  if (status === "closed") return "badge-neutral";
+  return "badge-neutral";
 }
 
 function deploySection(db: Db, config: RuntimeConfig): TrustedHtml {
@@ -3752,11 +3724,11 @@ function deploySection(db: Db, config: RuntimeConfig): TrustedHtml {
         deployed @ ${lastDeploy.sha.slice(0, 8)} at
         ${lastDeploy.finished_at ?? lastDeploy.started_at}
       </p>`
-    : raw(`<p class="text-sm text-slate-400 mb-3">no successful deploy yet</p>`);
+    : raw(`<p class="text-sm text-muted mb-3">no successful deploy yet</p>`);
 
   const rows: TrustedHtml =
     recent.length === 0
-      ? raw("<tr><td colspan=5 class='py-2 text-slate-400 text-xs px-2'>no deploys yet</td></tr>")
+      ? raw("<tr><td colspan=5 class='py-2 text-muted text-xs px-2'>no deploys yet</td></tr>")
       : html`${recent.map(
           (d) => html`<tr class="border-t">
             <td class="px-2 py-1.5 text-xs font-mono">${d.sha.slice(0, 8)}</td>
@@ -3765,14 +3737,14 @@ function deploySection(db: Db, config: RuntimeConfig): TrustedHtml {
             <td class="px-2 py-1.5">
               <span
                 class="${d.status === "ok"
-                  ? "bg-green-100 text-green-800"
+                  ? "badge-success"
                   : d.status === "running"
-                    ? "bg-blue-100 text-blue-800"
-                    : "bg-red-100 text-red-800"} px-1.5 py-0.5 rounded text-xs"
+                    ? "badge-info"
+                    : "badge-danger"} px-1.5 py-0.5 rounded text-xs"
                 >${d.status}</span
               >
             </td>
-            <td class="px-2 py-1.5 text-xs text-slate-500 max-w-xs truncate">
+            <td class="px-2 py-1.5 text-xs text-muted max-w-xs truncate">
               ${d.status === "error" ? (d.error ?? "") : (d.finished_at ?? d.started_at)}
             </td>
           </tr>`,
@@ -3781,8 +3753,8 @@ function deploySection(db: Db, config: RuntimeConfig): TrustedHtml {
   return html`
     <h2 class="text-lg font-semibold mb-2">Deploy (CD)</h2>
     ${markerHtml}
-    <table class="w-full text-sm bg-white border rounded shadow-sm">
-      <thead class="bg-slate-50 text-slate-600 text-left text-xs">
+    <table class="w-full text-sm bg-elevated border rounded shadow-sm">
+      <thead class="bg-surface text-secondary text-left text-xs">
         <tr>
           <th class="px-2 py-2">SHA</th>
           <th class="px-2 py-2">Branch</th>
@@ -3817,6 +3789,6 @@ function prAwaitingLabel(p: ActivePr): import("./layout.js").TrustedHtml {
   if (p.status === "needs_human") {
     parts.push(raw(`<span class="text-amber-700">awaiting your reply</span>`));
   }
-  if (parts.length === 0) parts.push(raw(`<span class="text-slate-400">idle</span>`));
+  if (parts.length === 0) parts.push(raw(`<span class="text-muted">idle</span>`));
   return html`${parts}`;
 }
