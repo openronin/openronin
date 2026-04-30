@@ -37,6 +37,9 @@ import { isPaused } from "../lib/pause.js";
 import { html, page, isHtmx, raw, escapeHtml, t as time, type TrustedHtml } from "./layout.js";
 import { button } from "./components/button.js";
 import { badge, type BadgeTone } from "./components/badge.js";
+import { card } from "./components/card.js";
+import { table } from "./components/table.js";
+import { yamlEditor } from "./components/form.js";
 
 interface Args {
   db: Db;
@@ -204,25 +207,49 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
     if (ws.length === 0) {
       return c.html(`<div class="text-muted text-sm">no watched repos</div>`);
     }
-    const rows = ws
+    // Sort busy first, then by last-finished desc.
+    const sorted = [...ws].sort((a, b) => {
+      if (a.busy !== b.busy) return a.busy ? -1 : 1;
+      if (a.lastFinishedAt && b.lastFinishedAt) return a.lastFinishedAt > b.lastFinishedAt ? -1 : 1;
+      if (a.lastFinishedAt) return -1;
+      if (b.lastFinishedAt) return 1;
+      return 0;
+    });
+    const rows = sorted
       .map((w) => {
         const dot = w.busy
-          ? `<span class="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" title="busy"></span>`
-          : `<span class="inline-block w-2 h-2 rounded-full bg-slate-300" title="idle"></span>`;
-        const last = w.lastFinishedAt
-          ? `<span class="text-xs text-muted">last: <time data-ts="${escapeHtml(w.lastFinishedAt)}">${escapeHtml(w.lastFinishedAt)}</time> (${w.lastResultCount ?? 0} task(s))</span>`
+          ? `<span class="inline-block w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse shrink-0" title="busy"></span>`
+          : `<span class="inline-block w-2.5 h-2.5 rounded-full border border-subtle bg-surface shrink-0" title="idle"></span>`;
+        const lastTs = w.lastFinishedAt
+          ? `<span class="text-xs text-muted" title="${escapeHtml(w.lastFinishedAt)}"><time data-ts="${escapeHtml(w.lastFinishedAt)}">${escapeHtml(w.lastFinishedAt)}</time></span>`
           : `<span class="text-xs text-muted">never run</span>`;
-        return `<li class="flex items-center gap-2 py-1">${dot}<code class="text-sm">${escapeHtml(w.repoKey)}</code><span class="ml-auto">${last}</span></li>`;
+        const kickBtn =
+          `<button type="button" hx-post="/admin/api/drain-now" hx-target="#dash-flash" hx-swap="innerHTML"` +
+          ` class="btn btn-ghost btn-sm px-2 ml-1" title="Drain queue now">↻</button>`;
+        return (
+          `<li class="flex items-center gap-2 py-1.5 border-b border-subtle last:border-0">` +
+          `${dot}<code class="text-xs flex-1 min-w-0 truncate">${escapeHtml(w.repoKey)}</code>` +
+          `${lastTs}${kickBtn}</li>`
+        );
       })
       .join("");
-    return c.html(`<ul class="divide-y">${rows}</ul>`);
+    return c.html(`<ul>${rows}</ul>`);
   });
 
   app.get("/api/queue-cards", (c) => {
     const stats = queueStats(db);
-    const cards = html`${statCard("pending", stats.pending)} ${statCard("due", stats.due, "yellow")}
-    ${statCard("running", stats.running, "blue")} ${statCard("done", stats.done, "green")}
-    ${statCard("error", stats.error, stats.error > 0 ? "red" : "slate")}`;
+    const cards = html`
+      ${statCard("pending", stats.pending, "slate", "/admin/tasks?status=pending")}
+      ${statCard("due", stats.due, "yellow", "/admin/tasks?status=pending")}
+      ${statCard("running", stats.running, "blue")}
+      ${statCard("done", stats.done, "green", "/admin/tasks?status=done")}
+      ${statCard(
+        "error",
+        stats.error,
+        stats.error > 0 ? "red" : "slate",
+        "/admin/tasks?status=error",
+      )}
+    `;
     return c.html(cards.value);
   });
   app.get("/api/health-card", (c) => {
@@ -494,15 +521,45 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
     const config = getConfig();
     const repos = listRepos(db, { watchedOnly: true });
     const stats = queueStats(db);
-    const recent = listRecentRuns(db, 10);
-    // DB-only render so the dashboard always loads instantly. Live counts
-    // (new feedback, pending drafts) are fetched lazily via the HTMX block
-    // below.
     const activePrs = fetchActivePrsFromDb(db, config);
     const blockedPatches = listBlockedPatches(db);
     const jiraTasks = listPendingJiraTasks(db, 20);
     const todoistTasks = listPendingTodoistTasks(db, 20);
     const paused = isPaused(config.dataDir);
+    // Custom join so the table can show repo name alongside each run.
+    const recent = db
+      .prepare(
+        `SELECT ru.id, ru.task_id, ru.lane, ru.engine, ru.model, ru.status, ru.started_at,
+                ru.tokens_in, ru.tokens_out, ru.cost_usd,
+                r.owner, r.name AS repo_name
+         FROM runs ru
+         JOIN tasks t ON t.id = ru.task_id
+         JOIN repos r ON r.id = t.repo_id
+         ORDER BY ru.id DESC LIMIT 10`,
+      )
+      .all() as Array<{
+      id: number;
+      task_id: number;
+      lane: string;
+      engine: string;
+      model: string | null;
+      status: string;
+      started_at: string;
+      tokens_in: number | null;
+      tokens_out: number | null;
+      cost_usd: number | null;
+      owner: string;
+      repo_name: string;
+    }>;
+    // Show "clear rate-limit" button only when tasks are actually parked in cooldown.
+    const rateLimitedCount = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM tasks
+           WHERE last_error LIKE '%rate limit%' OR last_error LIKE '%RateLimited%'`,
+        )
+        .get() as { n: number }
+    ).n;
     const body = html`
       ${paused
         ? html`<div
@@ -526,7 +583,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
               "Pull the next pending task (the one waiting the longest) into the head of the queue",
           })}
           ${button({
-            variant: "secondary",
+            variant: "ghost",
             size: "sm",
             label: "↻ reconcile now",
             hxPost: "/admin/api/reconcile-now",
@@ -536,7 +593,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
             title: "Re-scan all watched repos for new items",
           })}
           ${button({
-            variant: "primary",
+            variant: "ghost",
             size: "sm",
             label: "▶ drain now",
             hxPost: "/admin/api/drain-now",
@@ -545,96 +602,150 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
             hxIndicator: "#dash-busy",
             title: "Process whatever is due in the queue right now",
           })}
-          ${button({
-            variant: "destructive",
-            size: "sm",
-            label: "🔓 clear rate-limit",
-            hxPost: "/admin/api/clear-rate-limit",
-            hxTarget: "#dash-flash",
-            hxSwap: "innerHTML",
-            hxIndicator: "#dash-busy",
-            hxConfirm:
-              "Clear rate-limit cooldown on all parked tasks? They will be re-queued immediately.",
-            title: "Topped up Claude tokens? Clear the rate-limit cooldown on all parked tasks.",
-          })}
+          ${rateLimitedCount > 0
+            ? button({
+                variant: "ghost",
+                size: "sm",
+                label: "🔓 clear rate-limit",
+                hxPost: "/admin/api/clear-rate-limit",
+                hxTarget: "#dash-flash",
+                hxSwap: "innerHTML",
+                hxIndicator: "#dash-busy",
+                hxConfirm:
+                  "Clear rate-limit cooldown on all parked tasks? They will be re-queued immediately.",
+                title:
+                  "Topped up Claude tokens? Clear the rate-limit cooldown on all parked tasks.",
+              })
+            : raw("")}
           <span id="dash-busy" class="htmx-indicator text-muted text-sm">…</span>
         </div>
       </div>
       <div id="dash-flash" class="mb-4"></div>
 
+      <!-- Stat counters: 5-col at xl (≥1280px), 3+2 at md, 2-col at sm -->
       <section
-        class="grid grid-cols-5 gap-3 mb-6"
+        class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mb-6"
         hx-get="/admin/api/queue-cards"
         hx-trigger="ai:refresh from:body"
         hx-swap="innerHTML"
       >
-        ${statCard("pending", stats.pending)} ${statCard("due", stats.due, "yellow")}
-        ${statCard("running", stats.running, "blue")} ${statCard("done", stats.done, "green")}
-        ${statCard("error", stats.error, stats.error > 0 ? "red" : "slate")}
+        ${statCard("pending", stats.pending, "slate", "/admin/tasks?status=pending")}
+        ${statCard("due", stats.due, "yellow", "/admin/tasks?status=pending")}
+        ${statCard("running", stats.running, "blue")}
+        ${statCard("done", stats.done, "green", "/admin/tasks?status=done")}
+        ${statCard(
+          "error",
+          stats.error,
+          stats.error > 0 ? "red" : "slate",
+          "/admin/tasks?status=error",
+        )}
       </section>
 
-      <section class="mb-6">
-        <h2 class="text-lg font-semibold mb-2">Workers (per repo)</h2>
-        <div
-          class="bg-elevated border rounded shadow-sm p-3"
-          hx-get="/admin/api/workers"
-          hx-trigger="load, ai:refresh from:body"
-          hx-swap="innerHTML"
-        >
-          <div class="text-muted text-sm">loading…</div>
-        </div>
-      </section>
+      <!-- Workers + Watched repos: 2-col at lg+, stacked below -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <section>
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-muted mb-2">
+            Workers (per repo)
+          </h2>
+          <div
+            class="card card-bordered p-3"
+            hx-get="/admin/api/workers"
+            hx-trigger="load, ai:refresh from:body"
+            hx-swap="innerHTML"
+          >
+            <div class="text-muted text-sm">loading…</div>
+          </div>
+        </section>
+
+        <section>
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-muted mb-2">
+            Watched repos (${repos.length})
+          </h2>
+          <div class="space-y-2">
+            ${repos.length === 0
+              ? html`<p class="text-muted text-sm">
+                  <em>none yet — </em
+                  ><a href="/admin/repos" class="text-brand hover:underline">add one</a>
+                </p>`
+              : repos.map((r) => {
+                  let repoCfg: { lanes?: string[] } = {};
+                  try {
+                    repoCfg = JSON.parse(r.config_json) as { lanes?: string[] };
+                  } catch {
+                    // ignore
+                  }
+                  const lanes = repoCfg.lanes ?? ["triage"];
+                  const isWatched = r.watched === 1;
+                  return html`<a
+                    href="/admin/repos/${r.id}"
+                    class="card card-bordered flex flex-col gap-1.5 p-3 hover:shadow-md transition-shadow"
+                    style="display:flex"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs text-muted font-mono">${r.provider}</span>
+                      <span class="font-medium text-sm flex-1 min-w-0 truncate"
+                        >${r.owner}/${r.name}</span
+                      >
+                      ${badge({
+                        label: isWatched ? "watched" : "paused",
+                        tone: isWatched ? "success" : "warning",
+                      })}
+                    </div>
+                    <div class="flex flex-wrap gap-1">
+                      ${lanes.map((lane) => html`<span class="bdg bdg-neutral">${lane}</span>`)}
+                    </div>
+                  </a>`;
+                })}
+          </div>
+        </section>
+      </div>
 
       ${recentErrorsPanel(db)}
 
-      <section class="grid grid-cols-2 gap-6">
-        <div>
-          <h2 class="text-lg font-semibold mb-2">Watched repos (${repos.length})</h2>
-          <ul class="space-y-1">
-            ${repos.length === 0
-              ? raw(
-                  "<li class='text-muted'><em>none yet — </em><a href='/admin/repos' class='text-blue-700 hover:underline'>add one</a></li>",
-                )
-              : repos.map(
-                  (r) =>
-                    html`<li>
-                      <a href="/admin/repos/${r.id}" class="text-blue-700 hover:underline"
-                        >${r.provider}:${r.owner}/${r.name}</a
-                      >
-                    </li>`,
-                )}
-          </ul>
+      <!-- Recent runs: full-width table with sticky header -->
+      <section class="mb-6">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-sm font-semibold uppercase tracking-wide text-muted">Recent runs</h2>
+          <a href="/admin/logs" class="text-xs text-brand hover:underline">Show more →</a>
         </div>
-        <div>
-          <h2 class="text-lg font-semibold mb-2">Recent runs</h2>
-          <table class="w-full text-sm">
-            <thead class="text-left text-muted">
-              <tr>
-                <th>id</th>
-                <th>started</th>
-                <th>engine</th>
-                <th>status</th>
-                <th>tokens</th>
-                <th>cost</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${recent.length === 0
-                ? raw("<tr><td colspan=6 class='text-muted py-2'><em>no runs yet</em></td></tr>")
-                : recent.map(
-                    (r) =>
-                      html`<tr class="border-t">
-                        <td>#${r.id}</td>
-                        <td>${time(r.started_at)}</td>
-                        <td>${r.engine}/${r.model ?? "?"}</td>
-                        <td>${badge({ label: r.status, tone: runStatusTone(r.status) })}</td>
-                        <td>${r.tokens_in ?? "-"}/${r.tokens_out ?? "-"}</td>
-                        <td>${r.cost_usd != null ? "$" + r.cost_usd.toFixed(4) : "-"}</td>
-                      </tr>`,
-                  )}
-            </tbody>
-          </table>
-        </div>
+        ${table({
+          columns: [
+            { key: "id", label: "#" },
+            { key: "started", label: "Started", nowrap: true },
+            { key: "repo", label: "Repo" },
+            { key: "lane", label: "Lane" },
+            { key: "engine", label: "Engine" },
+            { key: "status", label: "Status" },
+            { key: "tokens", label: "Tokens" },
+            { key: "cost", label: "Cost" },
+          ],
+          rows: recent.map(
+            (r) =>
+              html`<tr
+                class="hover:bg-surface cursor-pointer"
+                onclick="location.href='/admin/tasks/${r.task_id}'"
+              >
+                <td class="px-3 py-2 text-xs text-muted">#${r.id}</td>
+                <td class="px-3 py-2 text-xs text-muted whitespace-nowrap">
+                  ${time(r.started_at)}
+                </td>
+                <td class="px-3 py-2 text-xs">${r.owner}/${r.repo_name}</td>
+                <td class="px-3 py-2 text-xs">${r.lane}</td>
+                <td class="px-3 py-2 text-xs text-muted">${r.engine}/${r.model ?? "?"}</td>
+                <td class="px-3 py-2">
+                  ${badge({ label: r.status, tone: runStatusTone(r.status) })}
+                </td>
+                <td class="px-3 py-2 text-xs text-muted">
+                  ${r.tokens_in ?? "—"}/${r.tokens_out ?? "—"}
+                </td>
+                <td class="px-3 py-2 text-xs text-muted font-mono">
+                  ${r.cost_usd != null ? "$" + r.cost_usd.toFixed(4) : "—"}
+                </td>
+              </tr>`,
+          ),
+          emptyMessage: "No runs yet.",
+          maxHeight: "380px",
+        })}
       </section>
 
       <section class="mt-8">
@@ -978,150 +1089,365 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
       ? readFileSync(yamlPath, "utf8")
       : YAML.stringify({ provider: row.provider, owner: row.owner, name: row.name });
 
+    // Parse config for lanes and deploy mode (best-effort).
+    let parsedCfg: { lanes?: string[]; deploy?: { mode?: string; commands?: string[] } } = {};
+    try {
+      parsedCfg = YAML.parse(yamlText) as typeof parsedCfg;
+    } catch {
+      // leave empty
+    }
+    const configuredLanes: string[] = parsedCfg.lanes ?? ["triage"];
+    const deployMode = parsedCfg.deploy?.mode ?? "disabled";
+    const deployCmds: string[] = parsedCfg.deploy?.commands ?? [];
+
+    // Last 5 runs per lane for sparkline dots.
+    const laneRunsRaw = db
+      .prepare(
+        `SELECT ru.id, ru.lane, ru.status
+         FROM runs ru JOIN tasks t ON t.id = ru.task_id
+         WHERE t.repo_id = ? ORDER BY ru.id DESC LIMIT 100`,
+      )
+      .all(id) as Array<{ id: number; lane: string; status: string }>;
+    const laneRunsMap: Record<string, Array<{ status: string }>> = {};
+    for (const r of laneRunsRaw) {
+      if (!laneRunsMap[r.lane]) laneRunsMap[r.lane] = [];
+      if (laneRunsMap[r.lane]!.length < 5) laneRunsMap[r.lane]!.push({ status: r.status });
+    }
+
+    // Last-run timestamp per lane.
+    const laneLastRunRaw = db
+      .prepare(
+        `SELECT ru.lane, MAX(ru.started_at) AS last_run
+         FROM runs ru JOIN tasks t ON t.id = ru.task_id
+         WHERE t.repo_id = ? GROUP BY ru.lane`,
+      )
+      .all(id) as Array<{ lane: string; last_run: string }>;
+    const laneLastRun = Object.fromEntries(laneLastRunRaw.map((r) => [r.lane, r.last_run]));
+
+    // Recent deploys for the Deployment card.
+    const recentDeploys = db
+      .prepare(
+        `SELECT id, sha, branch, triggered_by, status, started_at, finished_at, error
+         FROM deploys WHERE repo_id = ? ORDER BY id DESC LIMIT 10`,
+      )
+      .all(id) as Array<{
+      id: number;
+      sha: string;
+      branch: string;
+      triggered_by: string;
+      status: string;
+      started_at: string;
+      finished_at: string | null;
+      error: string | null;
+    }>;
+
+    const isWatched = row.watched === 1;
+    const ghUrl = `https://github.com/${row.owner}/${row.name}`;
+
     const body = html`
-      <h1 class="text-2xl font-semibold mb-4">${row.provider}:${row.owner}/${row.name}</h1>
-      <div id="flash" class="mb-3"></div>
+      <div id="flash" class="mb-4"></div>
 
-      <section class="bg-elevated rounded shadow-sm border p-4 mb-6">
-        <h2 class="font-medium mb-2">Configuration (YAML)</h2>
-        <p class="text-xs text-muted mb-2">
-          Saves to <code>${yamlPath}</code> and triggers config reload.
-        </p>
-        <form hx-post="/admin/repos/${id}" hx-target="#flash">
-          <textarea
-            name="yaml"
-            rows="20"
-            spellcheck="false"
-            class="w-full border rounded px-3 py-2 text-sm"
-          >
-${yamlText}</textarea
-          >
-          <div class="mt-3 flex gap-2 items-center flex-wrap">
-            <button class="bg-slate-900 text-white rounded px-4 py-2 text-sm">Save</button>
-            <button
-              type="button"
-              hx-post="/admin/api/repos/${id}/connect-webhook"
-              hx-target="#flash"
-              class="bg-sunken rounded px-4 py-2 text-sm"
-              title="Auto: creates a webhook via the GitHub API. Requires admin permission on the repo."
-            >
-              Connect webhook (auto)
-            </button>
-            <button
-              type="button"
-              hx-get="/admin/api/repos/${id}/webhook-info"
-              hx-target="#webhook-info"
-              hx-swap="innerHTML"
-              class="bg-sunken rounded px-4 py-2 text-sm"
-              title="For private personal repos where the bot can't create webhooks via API"
-            >
-              Show manual setup info
-            </button>
-            <button
-              type="button"
-              hx-post="/admin/api/repos/${id}/ensure-labels"
-              hx-target="#flash"
-              class="bg-sunken rounded px-4 py-2 text-sm"
-              title="Verify the agent's trigger / in-progress labels exist; create them if missing"
-            >
-              Verify / create labels (auto)
-            </button>
-            <button
-              type="button"
-              hx-get="/admin/api/repos/${id}/labels-info"
-              hx-target="#labels-info"
-              hx-swap="innerHTML"
-              class="bg-sunken rounded px-4 py-2 text-sm"
-              title="For private repos where the bot can't create labels via API"
-            >
-              Show manual label setup
-            </button>
+      <!-- 1. Header card -->
+      ${card({
+        body: html`
+          <div class="flex flex-col sm:flex-row sm:items-start gap-4">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-1">
+                <span class="text-xs text-muted font-mono">${row.provider}</span>
+                ${badge({
+                  label: isWatched ? "watched" : "paused",
+                  tone: isWatched ? "success" : "warning",
+                })}
+              </div>
+              <h1 class="text-2xl font-semibold truncate">${row.owner}/${row.name}</h1>
+              <div class="flex flex-wrap gap-1 mt-2">
+                ${configuredLanes.map((lane) => html`<span class="bdg bdg-neutral">${lane}</span>`)}
+              </div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              ${isWatched
+                ? button({
+                    variant: "ghost",
+                    size: "sm",
+                    label: "⏸ Pause repo",
+                    hxPost: `/admin/api/repos/${id}/pause`,
+                    hxTarget: "#flash",
+                    hxSwap: "innerHTML",
+                    hxConfirm: `Pause ${row.owner}/${row.name}? The scheduler will stop picking up tasks for it.`,
+                    title: "Stop the scheduler from processing this repo",
+                  })
+                : button({
+                    variant: "ghost",
+                    size: "sm",
+                    label: "▶ Resume repo",
+                    hxPost: `/admin/api/repos/${id}/resume`,
+                    hxTarget: "#flash",
+                    hxSwap: "innerHTML",
+                    title: "Resume scheduler processing for this repo",
+                  })}
+              ${button({
+                variant: "ghost",
+                size: "sm",
+                label: "↻ Sync now",
+                hxPost: "/admin/api/reconcile-now",
+                hxTarget: "#flash",
+                hxSwap: "innerHTML",
+                title: "Re-scan all watched repos (including this one) for new items",
+              })}
+              <a
+                href="${ghUrl}"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn btn-ghost btn-sm"
+                title="Open on GitHub"
+                >↗ GitHub</a
+              >
+            </div>
           </div>
-          <div id="webhook-info" class="mt-3"></div>
-          <div id="labels-info" class="mt-3"></div>
-        </form>
-      </section>
+        `,
+        variant: "bordered",
+        padding: "lg",
+      })}
 
-      <section class="bg-elevated rounded shadow-sm border p-4">
-        <h2 class="font-medium mb-2">Deployment</h2>
-        <p class="text-xs text-muted mb-3">
-          Configure <code>deploy.mode</code> (local | ssh), <code>deploy.commands</code> and (for
-          ssh) <code>deploy.ssh.host</code> + <code>deploy.ssh.key_path</code>
-          in the repo config above. Then use the buttons here.
-        </p>
-        <div class="flex gap-2 flex-wrap">
-          <button
-            type="button"
-            hx-post="/admin/api/repos/${id}/deploy-now"
-            hx-target="#flash"
-            hx-indicator="#deploy-busy"
-            class="bg-amber-700 hover:bg-amber-800 text-white rounded px-4 py-2 text-sm"
-            title="Run the configured deploy commands now (skips the push-webhook check)"
-            onclick="return confirm('Run deploy commands now? This will execute on the configured target.')"
-          >
-            ▶ Deploy now
-          </button>
-          <button
-            type="button"
-            hx-get="/admin/api/deploy/ssh-public-key"
-            hx-target="#deploy-info"
-            hx-swap="innerHTML"
-            class="bg-sunken rounded px-4 py-2 text-sm"
-            title="Bot's SSH public key for ~/.ssh/authorized_keys on the deploy target"
-          >
-            Show SSH public key
-          </button>
-          <button
-            type="button"
-            hx-get="/admin/api/deploy/config-example"
-            hx-target="#deploy-info"
-            hx-swap="innerHTML"
-            class="bg-sunken rounded px-4 py-2 text-sm"
-            title="Annotated YAML examples for local + ssh deploy modes"
-          >
-            Show config example
-          </button>
-          <span id="deploy-busy" class="htmx-indicator text-muted self-center">…</span>
-        </div>
-        <div id="deploy-info" class="mt-3"></div>
-      </section>
+      <!-- 2. Configuration card -->
+      <div class="mt-6">
+        ${card({
+          title: "Configuration (YAML)",
+          body: html`
+            <p class="text-xs text-muted mb-3">
+              Saves to <code class="code-inline">${yamlPath}</code> and triggers config reload.
+            </p>
+            <form hx-post="/admin/repos/${id}" hx-target="#flash" id="repo-config-form">
+              ${yamlEditor({ name: "yaml", value: yamlText, rows: 20 })}
+              <div class="mt-4 flex items-center gap-2 flex-wrap">
+                ${button({
+                  label: "Save",
+                  variant: "primary",
+                  size: "md",
+                  type: "submit",
+                  hxIndicator: "#config-busy",
+                  title: "Save YAML and reload config",
+                })}
+                <span id="config-busy" class="htmx-indicator text-muted text-sm">saving…</span>
+                <div class="ml-auto flex items-center gap-2 flex-wrap">
+                  ${button({
+                    label: "Connect webhook",
+                    variant: "ghost",
+                    size: "sm",
+                    hxPost: `/admin/api/repos/${id}/connect-webhook`,
+                    hxTarget: "#flash",
+                    title:
+                      "Auto: creates a webhook via the GitHub API. Requires admin permission on the repo.",
+                  })}
+                  ${button({
+                    label: "Show webhook info",
+                    variant: "ghost",
+                    size: "sm",
+                    hxGet: `/admin/api/repos/${id}/webhook-info`,
+                    hxTarget: "#webhook-info",
+                    hxSwap: "innerHTML",
+                    title: "Manual setup: copy these values into GitHub → Settings → Webhooks",
+                  })}
+                  ${button({
+                    label: "Create labels",
+                    variant: "ghost",
+                    size: "sm",
+                    hxPost: `/admin/api/repos/${id}/ensure-labels`,
+                    hxTarget: "#flash",
+                    title:
+                      "Verify the agent's trigger / in-progress labels exist; create them if missing",
+                  })}
+                  ${button({
+                    label: "Show label info",
+                    variant: "ghost",
+                    size: "sm",
+                    hxGet: `/admin/api/repos/${id}/labels-info`,
+                    hxTarget: "#labels-info",
+                    hxSwap: "innerHTML",
+                    title: "Manual label setup for repos where the bot lacks write access",
+                  })}
+                </div>
+              </div>
+              <div id="webhook-info" class="mt-3"></div>
+              <div id="labels-info" class="mt-3"></div>
+            </form>
+          `,
+          variant: "bordered",
+        })}
+      </div>
 
-      <section class="bg-elevated rounded shadow-sm border p-4">
-        <h2 class="font-medium mb-2">Run review now</h2>
-        <form
-          hx-post="/admin/api/repos/${id}/review-now"
-          hx-target="#flash"
-          class="flex gap-2 items-end"
-        >
-          <label class="text-sm"
-            >Item number
-            <input
-              name="number"
-              type="number"
-              min="1"
-              required
-              class="block border rounded px-2 py-1.5 mt-1 w-32"
-            />
-          </label>
-          <label class="text-sm"
-            >Engine override
-            <select name="engine" class="block border rounded px-2 py-1.5 mt-1">
-              <option value="">(use default)</option>
-              <option value="mimo">mimo</option>
-              <option value="claude_code">claude_code</option>
-            </select>
-          </label>
-          <label class="text-sm"
-            >Model override
-            <input
-              name="model"
-              class="block border rounded px-2 py-1.5 mt-1"
-              placeholder="(default)"
-            />
-          </label>
-          <button class="bg-blue-700 text-white rounded px-4 py-2 text-sm">Review</button>
-        </form>
-      </section>
+      <!-- 3. Deployment card (only when deploy.mode != disabled) -->
+      ${deployMode !== "disabled"
+        ? html`<div class="mt-6">
+            ${card({
+              title: "Deployment",
+              actions: html`
+                ${button({
+                  label: "▶ Deploy now",
+                  variant: "primary",
+                  size: "sm",
+                  hxPost: `/admin/api/repos/${id}/deploy-now`,
+                  hxTarget: "#flash",
+                  hxIndicator: "#deploy-busy",
+                  hxConfirm: "Run deploy commands now? This will execute on the configured target.",
+                  title: "Run the configured deploy commands now (skips the push-webhook check)",
+                })}
+                <span id="deploy-busy" class="htmx-indicator text-muted text-sm">…</span>
+              `,
+              body: html`
+                ${recentDeploys.length > 0
+                  ? html`<div class="mb-4">
+                      ${table({
+                        columns: [
+                          { key: "sha", label: "SHA" },
+                          { key: "branch", label: "Branch" },
+                          { key: "by", label: "Triggered by" },
+                          { key: "dur", label: "Duration" },
+                          { key: "status", label: "Status" },
+                          { key: "started", label: "Started", nowrap: true },
+                        ],
+                        rows: recentDeploys.map((d) => {
+                          const norm = (ts: string) =>
+                            ts.replace(" ", "T") + (/[zZ]$/.test(ts) ? "" : "Z");
+                          const dur =
+                            d.started_at && d.finished_at
+                              ? (
+                                  (new Date(norm(d.finished_at)).getTime() -
+                                    new Date(norm(d.started_at)).getTime()) /
+                                  1000
+                                ).toFixed(0) + "s"
+                              : "—";
+                          const depTone =
+                            d.status === "ok"
+                              ? "success"
+                              : d.status === "running"
+                                ? "info"
+                                : "danger";
+                          return html`<tr>
+                            <td class="px-3 py-2 font-mono text-xs">${d.sha.slice(0, 8)}</td>
+                            <td class="px-3 py-2 text-xs">${d.branch}</td>
+                            <td class="px-3 py-2 text-xs text-muted">${d.triggered_by}</td>
+                            <td class="px-3 py-2 text-xs text-muted">${dur}</td>
+                            <td class="px-3 py-2">
+                              ${badge({ label: d.status, tone: depTone as BadgeTone })}
+                            </td>
+                            <td class="px-3 py-2 text-xs text-muted">${time(d.started_at)}</td>
+                          </tr>`;
+                        }),
+                        emptyMessage: "No deploys yet.",
+                        maxHeight: "260px",
+                      })}
+                    </div>`
+                  : html`<p class="text-muted text-sm mb-4">No deploys yet.</p>`}
+                ${deployCmds.length > 0
+                  ? html`<div>
+                      <div class="text-xs font-medium text-muted uppercase tracking-wide mb-1">
+                        Deploy commands (read-only — edit in YAML above)
+                      </div>
+                      <div class="code-block-wrap">
+                        <pre class="code-block">${deployCmds.join("\n")}</pre>
+                      </div>
+                    </div>`
+                  : raw("")}
+                <div class="mt-4 flex gap-2 flex-wrap">
+                  ${button({
+                    label: "Show SSH public key",
+                    variant: "ghost",
+                    size: "sm",
+                    hxGet: "/admin/api/deploy/ssh-public-key",
+                    hxTarget: "#deploy-info",
+                    hxSwap: "innerHTML",
+                    title: "Bot's SSH public key for ~/.ssh/authorized_keys on the deploy target",
+                  })}
+                  ${button({
+                    label: "Show config example",
+                    variant: "ghost",
+                    size: "sm",
+                    hxGet: "/admin/api/deploy/config-example",
+                    hxTarget: "#deploy-info",
+                    hxSwap: "innerHTML",
+                    title: "Annotated YAML examples for local + ssh deploy modes",
+                  })}
+                </div>
+                <div id="deploy-info" class="mt-3"></div>
+              `,
+              variant: "bordered",
+            })}
+          </div>`
+        : raw("")}
+
+      <!-- 4. Lanes card -->
+      <div class="mt-6">
+        ${card({
+          title: "Lanes",
+          body: html`
+            <ul class="divide-y">
+              ${configuredLanes.map((lane) => {
+                const lastRun = laneLastRun[lane];
+                const dots = laneRunsMap[lane] ?? [];
+                const sparkline = dots.map((r) => {
+                  const color =
+                    r.status === "ok"
+                      ? "var(--status-success-fg)"
+                      : r.status === "error"
+                        ? "var(--status-danger-fg)"
+                        : "var(--fg-muted)";
+                  return `<span style="color:${color}" title="${escapeHtml(r.status)}">●</span>`;
+                });
+                return html`<li class="flex items-center gap-3 py-2.5">
+                  <span class="text-sm font-medium w-32 shrink-0">${lane}</span>
+                  <div class="flex gap-0.5 text-xs font-mono">${raw(sparkline.join(""))}</div>
+                  <span class="ml-auto text-xs text-muted">
+                    ${lastRun
+                      ? html`<time data-ts="${lastRun}">${lastRun}</time>`
+                      : raw("never run")}
+                  </span>
+                  <a
+                    href="/admin/logs?lane=${lane}"
+                    class="btn btn-ghost btn-sm px-2"
+                    title="View runs for this lane"
+                    >→</a
+                  >
+                </li>`;
+              })}
+            </ul>
+          `,
+          variant: "bordered",
+        })}
+      </div>
+
+      <!-- Run review (advanced / debug tool, kept at bottom) -->
+      <div class="mt-6">
+        ${card({
+          title: "Run review now",
+          body: html`
+            <form
+              hx-post="/admin/api/repos/${id}/review-now"
+              hx-target="#flash"
+              class="flex gap-3 items-end flex-wrap"
+            >
+              <label class="text-sm form-field">
+                <span class="form-label">Item number</span>
+                <input name="number" type="number" min="1" required class="form-input w-28" />
+              </label>
+              <label class="text-sm form-field">
+                <span class="form-label">Engine override</span>
+                <select name="engine" class="form-select">
+                  <option value="">(use default)</option>
+                  <option value="mimo">mimo</option>
+                  <option value="claude_code">claude_code</option>
+                </select>
+              </label>
+              <label class="text-sm form-field">
+                <span class="form-label">Model override</span>
+                <input name="model" class="form-input w-36" placeholder="(default)" />
+              </label>
+              ${button({ label: "Review", variant: "secondary", size: "md", type: "submit" })}
+            </form>
+          `,
+          variant: "bordered",
+        })}
+      </div>
     `;
     return c.html(
       page({
@@ -1457,6 +1783,26 @@ ${yamlText}</textarea
     );
     writeFileSync(yamlPath, yamlText, { mode: 0o600 });
     return c.html(flash("ok", `Saved ${yamlPath} — reload picked up automatically.`));
+  });
+
+  // Pause a repo: set watched=0 so the scheduler skips it.
+  app.post("/api/repos/:id/pause", (c) => {
+    const id = Number(c.req.param("id"));
+    const row = listRepos(db, { watchedOnly: false }).find((r) => r.id === id);
+    if (!row) return c.html(flash("error", "Repo not found"), 404);
+    db.prepare("UPDATE repos SET watched = 0 WHERE id = ?").run(id);
+    return c.html(
+      flash("ok", `${row.owner}/${row.name} paused — scheduler will skip it until resumed.`),
+    );
+  });
+
+  // Resume a repo: set watched=1 so the scheduler picks it up again.
+  app.post("/api/repos/:id/resume", (c) => {
+    const id = Number(c.req.param("id"));
+    const row = listRepos(db, { watchedOnly: false }).find((r) => r.id === id);
+    if (!row) return c.html(flash("error", "Repo not found"), 404);
+    db.prepare("UPDATE repos SET watched = 1 WHERE id = ?").run(id);
+    return c.html(flash("ok", `${row.owner}/${row.name} resumed.`));
   });
 
   // -------- Connect webhook (HTMX endpoint) --------
@@ -3226,17 +3572,33 @@ function recentErrorsPanel(db: Db): TrustedHtml {
   </section>`;
 }
 
-function statCard(label: string, value: number, color = "slate"): TrustedHtml {
-  const valueColor: Record<string, string> = {
-    slate: "text-primary",
-    blue: "badge-info",
-    green: "badge-success",
-    yellow: "badge-warning",
-    red: "badge-danger",
+function statCard(label: string, value: number, color = "slate", href?: string): TrustedHtml {
+  const C: Record<string, { border: string; text: string }> = {
+    slate: { border: "var(--border-strong)", text: "var(--fg-primary)" },
+    blue: { border: "var(--status-info-border)", text: "var(--status-info-fg)" },
+    green: { border: "var(--status-success-border)", text: "var(--status-success-fg)" },
+    yellow: { border: "var(--status-warning-border)", text: "var(--status-warning-fg)" },
+    red: { border: "var(--status-danger-border)", text: "var(--status-danger-fg)" },
   };
-  return html`<div class="rounded shadow-sm border border-subtle bg-elevated p-3">
-    <div class="text-xs uppercase tracking-wide text-muted">${label}</div>
-    <div class="text-2xl font-semibold ${valueColor[color] ?? "text-primary"}">${value}</div>
+  const { border, text } = C[color] ?? C["slate"]!;
+  const inner = raw(
+    `<div class="text-xs uppercase tracking-wide text-muted font-medium mb-1">${escapeHtml(label)}</div>` +
+      `<div class="text-3xl font-bold leading-none" style="color:${text}">${escapeHtml(String(value))}</div>`,
+  );
+  const baseStyle = `border-left:3px solid ${border}`;
+  if (href) {
+    return html`<a
+      href="${href}"
+      class="block rounded-lg bg-elevated border border-subtle shadow-sm p-4 hover:shadow-md transition-shadow"
+      style="${baseStyle}"
+      >${inner}</a
+    >`;
+  }
+  return html`<div
+    class="rounded-lg bg-elevated border border-subtle shadow-sm p-4"
+    style="${baseStyle}"
+  >
+    ${inner}
   </div>`;
 }
 
