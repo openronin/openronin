@@ -1,5 +1,18 @@
 import { Hono } from "hono";
 import { html, page, isHtmx } from "./layout.js";
+import { button } from "./components/button.js";
+import { badge } from "./components/badge.js";
+import { card } from "./components/card.js";
+import {
+  formField,
+  formInput,
+  formSelect,
+  formTextarea,
+  formCheckbox,
+  formToggle,
+} from "./components/form.js";
+import { codeInline, codeBlock } from "./components/code.js";
+import { table } from "./components/table.js";
 
 const SURFACE_TOKENS = [
   { var: "--surface-base", label: "surface-base" },
@@ -120,6 +133,96 @@ export function styleguideRoute(): Hono {
           Z-index Layers
         </h2>
         <div class="grid grid-cols-3 gap-3 max-w-sm">${zIndexTable()}</div>
+      </section>
+
+      <section class="mb-10">
+        <h2 class="text-lg font-semibold text-primary mb-4 border-b border-subtle pb-2">Buttons</h2>
+        <h3 class="text-sm font-medium text-secondary uppercase tracking-wide mb-3">Variants (md)</h3>
+        <div class="flex flex-wrap gap-3 items-center mb-4">
+          ${button({ variant: "primary", label: "Primary" })} ${button({ variant: "secondary", label: "Secondary" })}
+          ${button({ variant: "ghost", label: "Ghost" })} ${button({ variant: "destructive", label: "Destructive" })}
+          ${button({ variant: "link", label: "Link" })}
+        </div>
+        <h3 class="text-sm font-medium text-secondary uppercase tracking-wide mb-3">Sizes</h3>
+        <div class="flex flex-wrap gap-3 items-center mb-4">
+          ${button({ variant: "primary", size: "sm", label: "Small (sm)" })} ${button({ variant: "primary", size: "md", label: "Medium (md)" })}
+          ${button({ variant: "primary", size: "lg", label: "Large (lg)" })}
+        </div>
+        <h3 class="text-sm font-medium text-secondary uppercase tracking-wide mb-3">States</h3>
+        <div class="flex flex-wrap gap-3 items-center">
+          ${button({ variant: "primary", label: "Default" })} ${button({ variant: "primary", label: "Disabled", disabled: true })}
+          ${button({ variant: "primary", label: "Loading…", loading: true })} ${button({ variant: "secondary", label: "Disabled", disabled: true })}
+          ${button({ variant: "destructive", label: "Disabled", disabled: true })}
+        </div>
+      </section>
+
+      <section class="mb-10">
+        <h2 class="text-lg font-semibold text-primary mb-4 border-b border-subtle pb-2">Badges</h2>
+        <h3 class="text-sm font-medium text-secondary uppercase tracking-wide mb-3">Soft (default)</h3>
+        <div class="flex flex-wrap gap-2 mb-4">
+          ${badge({ tone: "neutral", label: "neutral" })} ${badge({ tone: "success", label: "success" })}
+          ${badge({ tone: "warning", label: "warning" })} ${badge({ tone: "danger", label: "danger" })}
+          ${badge({ tone: "info", label: "info" })}
+        </div>
+        <h3 class="text-sm font-medium text-secondary uppercase tracking-wide mb-3">Solid</h3>
+        <div class="flex flex-wrap gap-2 mb-4">
+          ${badge({ tone: "neutral", variant: "solid", label: "neutral" })} ${badge({ tone: "success", variant: "solid", label: "success" })}
+          ${badge({ tone: "warning", variant: "solid", label: "warning" })} ${badge({ tone: "danger", variant: "solid", label: "danger" })}
+          ${badge({ tone: "info", variant: "solid", label: "info" })}
+        </div>
+        <h3 class="text-sm font-medium text-secondary uppercase tracking-wide mb-3">Outline</h3>
+        <div class="flex flex-wrap gap-2 mb-4">
+          ${badge({ tone: "neutral", variant: "outline", label: "neutral" })} ${badge({ tone: "success", variant: "outline", label: "success" })}
+          ${badge({ tone: "warning", variant: "outline", label: "warning" })} ${badge({ tone: "danger", variant: "outline", label: "danger" })}
+          ${badge({ tone: "info", variant: "outline", label: "info" })}
+        </div>
+        <h3 class="text-sm font-medium text-secondary uppercase tracking-wide mb-3">
+          With dot (status use)
+        </h3>
+        <div class="flex flex-wrap gap-2">
+          ${badge({ tone: "success", label: "done", dot: true })} ${badge({ tone: "info", label: "running", dot: true })}
+          ${badge({ tone: "warning", label: "pending", dot: true })} ${badge({ tone: "danger", label: "error", dot: true })}
+          ${badge({ tone: "neutral", label: "closed", dot: true })}
+        </div>
+      </section>
+
+      <section class="mb-10">
+        <h2 class="text-lg font-semibold text-primary mb-4 border-b border-subtle pb-2">Cards</h2>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          ${card({ title: "Bordered (default)", variant: "bordered", body: html`<p class="text-secondary text-sm">Default card with border and subtle shadow.</p>` })} ${card({ title: "Elevated", variant: "elevated", body: html`<p class="text-secondary text-sm">Drop shadow, no border. For floating panels.</p>` })}
+          ${card({ title: "Inset", variant: "inset", body: html`<p class="text-secondary text-sm">Sunken background. For code previews and embeds.</p>` })}
+        </div>
+        <div class="mt-4">${card({ title: "With actions", variant: "bordered", actions: html`${button({ variant: "ghost", size: "sm", label: "Edit" })} ${button({ variant: "destructive", size: "sm", label: "Delete" })}`, body: html`<p class="text-secondary text-sm">Card with a title bar and right-aligned action buttons.</p>` })}</div>
+      </section>
+
+      <section class="mb-10">
+        <h2 class="text-lg font-semibold text-primary mb-4 border-b border-subtle pb-2">Form Controls</h2>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 max-w-2xl">
+          ${formField({ id: "ex-text", label: "Text input", helper: "Helper text below the field", control: formInput({ name: "ex-text", id: "ex-text", placeholder: "Enter text…" }) })} ${formField({ id: "ex-pass", label: "Password input", control: formInput({ name: "ex-pass", id: "ex-pass", type: "password", placeholder: "••••••" }) })}
+          ${formField({ id: "ex-select", label: "Select", helper: "Pick one option", control: formSelect({ name: "ex-select", id: "ex-select", options: [{ value: "", label: "Choose…" }, { value: "a", label: "Option A" }, { value: "b", label: "Option B" }] }) })} ${formField({ id: "ex-err", label: "With error", error: "This field is required", control: formInput({ name: "ex-err", id: "ex-err", hasError: true, placeholder: "Required field" }) })}
+        </div>
+        <div class="mt-4 max-w-2xl">${formField({ id: "ex-ta", label: "Textarea", helper: "Resizable multi-line input", control: formTextarea({ name: "ex-ta", id: "ex-ta", rows: 3, placeholder: "Enter description…" }) })}</div>
+        <div class="mt-4 flex flex-wrap gap-6 items-center">
+          ${formCheckbox({ name: "ex-cb", label: "Checkbox option" })} ${formCheckbox({ name: "ex-cb2", label: "Checked checkbox", checked: true })}
+          ${formToggle({ name: "ex-tog", label: "Toggle off" })} ${formToggle({ name: "ex-tog2", label: "Toggle on", checked: true })}
+        </div>
+      </section>
+
+      <section class="mb-10">
+        <h2 class="text-lg font-semibold text-primary mb-4 border-b border-subtle pb-2">Code Blocks</h2>
+        <div class="mb-4">
+          <p class="text-sm text-secondary mb-2">
+            Inline: use ${codeInline("codeInline()")} for short references like
+            ${codeInline("--brand-primary")} or ${codeInline("src/server/layout.ts")}.
+          </p>
+        </div>
+        <div class="mb-4">${codeBlock({ code: `# Block code example\nconst greeting = "hello world";\nconsole.log(greeting);`, copyButton: true })}</div>
+        <div>${codeBlock({ lang: "yaml", code: `repos:\n  - provider: github\n    owner: openronin\n    name: openronin\nengine:\n  model: claude-sonnet-4-6`, copyButton: true })}</div>
+      </section>
+
+      <section class="mb-10">
+        <h2 class="text-lg font-semibold text-primary mb-4 border-b border-subtle pb-2">Data Table</h2>
+        ${tableDemo()}
       </section>
 
       <script>
@@ -277,4 +380,48 @@ function zIndexTable(): string {
         `</div>`,
     )
     .join("");
+}
+
+function tableDemo(): import("./layout.js").TrustedHtml {
+  const demoRows = [
+    html`<tr>
+      <td class="px-3 py-2">#1</td>
+      <td class="px-3 py-2">openronin/openronin</td>
+      <td class="px-3 py-2">${badge({ tone: "success", label: "active", dot: true })}</td>
+      <td class="px-3 py-2">${button({ variant: "ghost", size: "sm", label: "View" })}</td>
+    </tr>`,
+    html`<tr>
+      <td class="px-3 py-2">#2</td>
+      <td class="px-3 py-2">openronin/docs</td>
+      <td class="px-3 py-2">${badge({ tone: "warning", label: "pending", dot: true })}</td>
+      <td class="px-3 py-2">${button({ variant: "ghost", size: "sm", label: "View" })}</td>
+    </tr>`,
+    html`<tr>
+      <td class="px-3 py-2">#3</td>
+      <td class="px-3 py-2">openronin/playground</td>
+      <td class="px-3 py-2">${badge({ tone: "neutral", label: "inactive", dot: true })}</td>
+      <td class="px-3 py-2">${button({ variant: "ghost", size: "sm", label: "View" })}</td>
+    </tr>`,
+  ];
+  const fullTable = table({
+    columns: [
+      { key: "id", label: "#", nowrap: true },
+      { key: "name", label: "Name", sortable: true },
+      { key: "status", label: "Status", sortable: true },
+      { key: "actions", label: "" },
+    ],
+    rows: demoRows,
+    currentSort: { key: "name", dir: "asc" },
+  });
+  const emptyTable = table({
+    columns: [
+      { key: "id", label: "#" },
+      { key: "name", label: "Name" },
+    ],
+    rows: [],
+    emptyMessage: "No repos configured yet.",
+    emptyCta: button({ variant: "primary", size: "sm", label: "Add repo", href: "/admin/repos" }),
+  });
+  return html`${fullTable}
+    <div class="mt-4">${emptyTable}</div>`;
 }

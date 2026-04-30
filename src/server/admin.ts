@@ -35,6 +35,8 @@ import { isBotMessage } from "../lanes/messages.js";
 import { parseSqliteUtc } from "../lib/time.js";
 import { isPaused } from "../lib/pause.js";
 import { html, page, isHtmx, raw, escapeHtml, t as time, type TrustedHtml } from "./layout.js";
+import { button } from "./components/button.js";
+import { badge, type BadgeTone } from "./components/badge.js";
 
 interface Args {
   db: Db;
@@ -511,53 +513,51 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
         : raw("")}
       <div class="flex items-center justify-between mb-4">
         <h1 class="text-2xl font-semibold">Dashboard</h1>
-        <div class="flex items-center gap-2 text-sm">
-          <button
-            type="button"
-            hx-post="/admin/api/kick-first-pending"
-            hx-target="#dash-flash"
-            hx-swap="innerHTML"
-            hx-indicator="#dash-busy"
-            class="px-2 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white"
-            title="Pull the next pending task (the one waiting the longest) into the head of the queue"
-          >
-            ⚡ kick pending
-          </button>
-          <button
-            type="button"
-            hx-post="/admin/api/reconcile-now"
-            hx-target="#dash-flash"
-            hx-swap="innerHTML"
-            hx-indicator="#dash-busy"
-            class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-800 text-white"
-            title="Re-scan all watched repos for new items"
-          >
-            ↻ reconcile now
-          </button>
-          <button
-            type="button"
-            hx-post="/admin/api/drain-now"
-            hx-target="#dash-flash"
-            hx-swap="innerHTML"
-            hx-indicator="#dash-busy"
-            class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-800 text-white"
-            title="Process whatever is due in the queue right now"
-          >
-            ▶ drain now
-          </button>
-          <button
-            type="button"
-            hx-post="/admin/api/clear-rate-limit"
-            hx-target="#dash-flash"
-            hx-swap="innerHTML"
-            hx-indicator="#dash-busy"
-            class="px-2 py-1 rounded bg-amber-700 hover:bg-amber-800 text-white"
-            title="Topped up Claude tokens? Clear the rate-limit cooldown on all parked tasks."
-            onclick="return confirm('Clear rate-limit cooldown on all parked tasks? They will be re-queued immediately.')"
-          >
-            🔓 clear rate-limit
-          </button>
-          <span id="dash-busy" class="htmx-indicator text-muted">…</span>
+        <div class="flex items-center gap-2">
+          ${button({
+            variant: "ghost",
+            size: "sm",
+            label: "⚡ kick pending",
+            hxPost: "/admin/api/kick-first-pending",
+            hxTarget: "#dash-flash",
+            hxSwap: "innerHTML",
+            hxIndicator: "#dash-busy",
+            title:
+              "Pull the next pending task (the one waiting the longest) into the head of the queue",
+          })}
+          ${button({
+            variant: "secondary",
+            size: "sm",
+            label: "↻ reconcile now",
+            hxPost: "/admin/api/reconcile-now",
+            hxTarget: "#dash-flash",
+            hxSwap: "innerHTML",
+            hxIndicator: "#dash-busy",
+            title: "Re-scan all watched repos for new items",
+          })}
+          ${button({
+            variant: "primary",
+            size: "sm",
+            label: "▶ drain now",
+            hxPost: "/admin/api/drain-now",
+            hxTarget: "#dash-flash",
+            hxSwap: "innerHTML",
+            hxIndicator: "#dash-busy",
+            title: "Process whatever is due in the queue right now",
+          })}
+          ${button({
+            variant: "destructive",
+            size: "sm",
+            label: "🔓 clear rate-limit",
+            hxPost: "/admin/api/clear-rate-limit",
+            hxTarget: "#dash-flash",
+            hxSwap: "innerHTML",
+            hxIndicator: "#dash-busy",
+            hxConfirm:
+              "Clear rate-limit cooldown on all parked tasks? They will be re-queued immediately.",
+            title: "Topped up Claude tokens? Clear the rate-limit cooldown on all parked tasks.",
+          })}
+          <span id="dash-busy" class="htmx-indicator text-muted text-sm">…</span>
         </div>
       </div>
       <div id="dash-flash" class="mb-4"></div>
@@ -627,11 +627,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                         <td>#${r.id}</td>
                         <td>${time(r.started_at)}</td>
                         <td>${r.engine}/${r.model ?? "?"}</td>
-                        <td>
-                          <span class="${runStatusClass(r.status)} px-1.5 py-0.5 rounded text-xs"
-                            >${r.status}</span
-                          >
-                        </td>
+                        <td>${badge({ label: r.status, tone: runStatusTone(r.status) })}</td>
                         <td>${r.tokens_in ?? "-"}/${r.tokens_out ?? "-"}</td>
                         <td>${r.cost_usd != null ? "$" + r.cost_usd.toFixed(4) : "-"}</td>
                       </tr>`,
@@ -3557,6 +3553,13 @@ function runStatusClass(status: string): string {
   if (status === "running") return "badge-info";
   if (status === "error") return "badge-danger";
   return "badge-neutral";
+}
+
+function runStatusTone(status: string): BadgeTone {
+  if (status === "ok") return "success";
+  if (status === "running") return "info";
+  if (status === "error") return "danger";
+  return "neutral";
 }
 
 function taskStatusClass(status: string): string {
