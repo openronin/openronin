@@ -45,35 +45,104 @@ function renderValue(v: unknown): string {
   return escapeHtml(String(v));
 }
 
-const NAV = [
+// Primary nav: most-frequented pages shown directly in the header.
+const PRIMARY_NAV = [
   { href: "/admin/", label: "Dashboard", section: "dashboard", key: "d" },
   { href: "/admin/repos", label: "Repos", section: "repos", key: "r" },
   { href: "/admin/tasks", label: "Tasks", section: "tasks", key: "t" },
-  { href: "/admin/logs", label: "Logs", section: "logs", key: "l" },
   { href: "/admin/cost", label: "Cost", section: "cost", key: "c" },
+];
+
+// Secondary nav: available via the "More" dropdown or mobile drawer.
+const MORE_NAV = [
+  { href: "/admin/logs", label: "Logs", section: "logs", key: "l" },
   { href: "/admin/metrics", label: "Metrics", section: "metrics", key: "m" },
   { href: "/admin/prompts", label: "Prompts", section: "prompts", key: "p" },
   { href: "/admin/settings", label: "Settings", section: "settings", key: "s" },
   { href: "/admin/audit", label: "Audit", section: "audit", key: "a" },
 ];
 
+const NAV = [...PRIMARY_NAV, ...MORE_NAV];
+
 export function page(opts: {
   title: string;
   section: string;
   body: TrustedHtml | string;
   isHtmx: boolean;
+  breadcrumb?: Array<{ label: string; href?: string }>;
+  tabs?: Array<{ label: string; href: string; active?: boolean }>;
+  actions?: TrustedHtml | string;
 }): string {
   const bodyStr = opts.body instanceof TrustedHtml ? opts.body.value : opts.body;
   if (opts.isHtmx) return bodyStr;
-  const nav = NAV.map(
-    (item) =>
-      `<a href="${item.href}" class="px-3 py-2 rounded ${item.section === opts.section ? "bg-slate-700 text-white" : "text-slate-300 hover:bg-slate-800"}">${item.label}</a>`,
-  ).join("");
-  const mobileNav = NAV.map(
-    (item) =>
-      `<a href="${item.href}" class="block px-3 py-2 rounded ${item.section === opts.section ? "bg-slate-700 text-white" : "text-slate-300 hover:bg-slate-800"}">${item.label}</a>`,
-  ).join("");
+
+  const isMoreActive = MORE_NAV.some((item) => item.section === opts.section);
+
+  const primaryNavHtml = PRIMARY_NAV.map((item) => {
+    const active = item.section === opts.section;
+    const cls = active
+      ? "px-3 py-2 rounded text-sm text-white bg-slate-700 border-b-2 border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
+      : "px-3 py-2 rounded text-sm text-slate-300 hover:bg-slate-800 hover:text-white focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-inset transition-colors";
+    return `<a href="${item.href}" class="${cls}"${active ? ' aria-current="page"' : ""}>${item.label}</a>`;
+  }).join("");
+
+  const moreItemsHtml = MORE_NAV.map((item) => {
+    const active = item.section === opts.section;
+    return `<a href="${item.href}" class="block px-4 py-2 text-sm ${active ? "bg-slate-600 text-white font-medium" : "text-slate-200 hover:bg-slate-700"} transition-colors">${item.label}</a>`;
+  }).join("");
+
+  const moreButtonCls = isMoreActive
+    ? "px-3 py-2 rounded text-sm text-white bg-slate-700 border-b-2 border-indigo-400 flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-inset"
+    : "px-3 py-2 rounded text-sm text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-1 focus:outline-none focus:ring-2 focus:ring-slate-500 focus:ring-inset transition-colors";
+
+  const mobileNavHtml = NAV.map((item) => {
+    const active = item.section === opts.section;
+    return `<a href="${item.href}" class="block px-3 py-2.5 rounded text-sm ${active ? "bg-slate-700 text-white font-medium" : "text-slate-300 hover:bg-slate-800 hover:text-white"} transition-colors">${item.label}</a>`;
+  }).join("");
+
   const cmdItems = JSON.stringify(NAV.map((n) => ({ label: n.label, href: n.href, key: n.key })));
+
+  // Breadcrumb + tabs section rendered between header and main.
+  let breadcrumbSection = "";
+  if (opts.breadcrumb && opts.breadcrumb.length > 0) {
+    const crumbs = opts.breadcrumb
+      .map((crumb, i) => {
+        const sep = i > 0 ? `<span class="text-muted mx-1.5 select-none">/</span>` : "";
+        if (crumb.href) {
+          return `${sep}<a href="${escapeHtml(crumb.href)}" class="hover:text-secondary transition-colors">${escapeHtml(crumb.label)}</a>`;
+        }
+        return `${sep}<span class="text-primary font-medium">${escapeHtml(crumb.label)}</span>`;
+      })
+      .join("");
+
+    const actionsHtml =
+      opts.actions != null
+        ? `<div class="flex items-center gap-2">${opts.actions instanceof TrustedHtml ? opts.actions.value : opts.actions}</div>`
+        : "";
+
+    const tabsHtml =
+      opts.tabs && opts.tabs.length > 0
+        ? `<div class="flex gap-0 -mb-px mt-2" role="tablist">${opts.tabs
+            .map((tab) => {
+              const cls = tab.active
+                ? "px-4 py-2 text-sm font-medium text-brand border-b-2 border-brand"
+                : "px-4 py-2 text-sm text-muted hover:text-secondary border-b-2 border-transparent hover:border-subtle transition-colors";
+              return `<a href="${escapeHtml(tab.href)}" class="${cls}" role="tab"${tab.active ? ' aria-current="page"' : ""}>${escapeHtml(tab.label)}</a>`;
+            })
+            .join("")}</div>`
+        : "";
+
+    breadcrumbSection = `<div class="border-b border-subtle bg-surface">
+  <div class="max-w-6xl mx-auto px-4">
+    <div class="flex items-center justify-between pt-2.5 pb-1">
+      <nav class="text-sm text-muted" aria-label="Breadcrumb"><ol class="flex items-center flex-wrap">${crumbs}</ol></nav>
+      ${actionsHtml}
+    </div>
+    ${tabsHtml}
+  </div>
+</div>`;
+  }
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -151,6 +220,7 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .bg-brand      {background:var(--brand-primary);color:var(--brand-primary-fg)}
 .bg-brand:hover{background:var(--brand-primary-hover)}
 .text-brand    {color:var(--brand-primary)}
+.border-brand  {border-color:var(--brand-primary)}
 .badge-success{background:var(--status-success-bg);color:var(--status-success-fg);border-color:var(--status-success-border)}
 .badge-warning{background:var(--status-warning-bg);color:var(--status-warning-fg);border-color:var(--status-warning-border)}
 .badge-danger {background:var(--status-danger-bg); color:var(--status-danger-fg); border-color:var(--status-danger-border)}
@@ -182,23 +252,67 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .dark .badge-danger {background:var(--status-danger-bg); color:var(--status-danger-fg); border-color:var(--status-danger-border)}
 .dark .badge-info   {background:var(--status-info-bg);   color:var(--status-info-fg);   border-color:var(--status-info-border)}
 .dark .badge-neutral{background:var(--status-neutral-bg);color:var(--status-neutral-fg);border-color:var(--status-neutral-border)}
+/* ─── Mobile responsive ───────────────────────────────────────────────────── */
 @media(max-width:767px){
   .mobile-scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch}
   .mobile-table{min-width:600px}
 }
+/* ─── Header: pause warning border ──────────────────────────────────────── */
+#app-header:has(.pause-active){border-top:3px solid var(--status-warning-border)}
+/* ─── Mobile drawer ──────────────────────────────────────────────────────── */
+#mobile-drawer{transform:translateX(-100%);transition:transform 200ms ease}
+#mobile-drawer.open{transform:translateX(0)}
+/* ─── More dropdown ──────────────────────────────────────────────────────── */
+#more-menu{display:none}
+#more-menu.open{display:block}
+/* ─── Breadcrumb tabs ────────────────────────────────────────────────────── */
+[role="tablist"] a{text-decoration:none}
 </style>
 </head>
 <body class="bg-surface text-primary min-h-screen">
-<header class="bg-slate-900 text-white">
-  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-2 flex-wrap">
-    <a href="/admin/" class="font-semibold tracking-tight text-lg shrink-0">openronin</a>
-    <button id="nav-toggle" class="md:hidden p-1.5 rounded hover:bg-slate-700 text-slate-300" aria-label="Toggle menu">
+
+<header id="app-header" class="bg-slate-900 text-white">
+  <div class="max-w-6xl mx-auto px-4 flex items-center h-12 gap-0">
+
+    <!-- Zone 1: Brand -->
+    <a href="/admin/" class="flex items-center gap-2 font-semibold tracking-tight text-base shrink-0 mr-5 text-white hover:text-slate-200 transition-colors">
+      <img src="/admin/_assets/icon.png" width="20" height="20" alt="" class="rounded opacity-90" onerror="this.style.display='none'">
+      openronin
+    </a>
+
+    <!-- Zone 2: Primary nav (desktop) -->
+    <nav class="hidden md:flex items-center gap-0.5 text-sm" aria-label="Main navigation">
+      ${primaryNavHtml}
+      <!-- More dropdown -->
+      <div class="relative" id="more-dropdown-container">
+        <button id="more-btn" type="button"
+          class="${moreButtonCls}"
+          aria-expanded="false" aria-haspopup="true" aria-controls="more-menu">
+          More
+          <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" class="opacity-70"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div id="more-menu" class="absolute top-full left-0 mt-1 w-40 bg-slate-800 rounded-lg shadow-xl border border-slate-700 py-1 z-10 overflow-hidden" role="menu">
+          ${moreItemsHtml}
+        </div>
+      </div>
+    </nav>
+
+    <!-- Mobile hamburger (hidden on desktop) -->
+    <button id="nav-toggle" class="md:hidden p-1.5 rounded hover:bg-slate-700 text-slate-300 ml-2 shrink-0" aria-label="Open navigation" aria-expanded="false" aria-controls="mobile-drawer">
       <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
-    <nav class="hidden md:flex gap-1 text-sm flex-wrap">${nav}</nav>
-    <div class="ml-auto flex items-center gap-2 flex-wrap">
-      <label class="text-xs text-slate-400 flex items-center gap-1">
-        tz
+
+    <!-- Zone 3: System state cluster (pushed right, thin divider before it) -->
+    <div class="ml-auto flex items-center gap-1.5">
+      <!-- Vertical divider (desktop only) -->
+      <div class="hidden md:block w-px h-5 bg-slate-700 mr-1.5 shrink-0"></div>
+
+      <!-- Pause state indicator + toggle (HTMX fragment) -->
+      <div id="pause-state-container" hx-get="/admin/api/pause-state" hx-trigger="load, ai:refresh from:body" hx-swap="innerHTML" class="flex items-center"></div>
+
+      <!-- TZ selector (desktop only) -->
+      <label class="hidden md:flex items-center gap-1 ml-1">
+        <span class="text-xs text-slate-400">tz</span>
         <select id="tz-select" class="bg-slate-800 text-slate-100 rounded px-1 py-0.5 text-xs border border-slate-700">
           <option value="Europe/Moscow" selected>MSK</option>
           <option value="UTC">UTC</option>
@@ -207,8 +321,10 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
           <option value="America/New_York">New York</option>
         </select>
       </label>
-      <label class="text-xs text-slate-400 flex items-center gap-1">
-        refresh
+
+      <!-- Refresh rate selector (desktop only) -->
+      <label class="hidden md:flex items-center gap-1 ml-1">
+        <span class="text-xs text-slate-400">refresh</span>
         <select id="refresh-rate" class="bg-slate-800 text-slate-100 rounded px-1 py-0.5 text-xs border border-slate-700">
           <option value="0">off</option>
           <option value="5">5s</option>
@@ -217,15 +333,54 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
           <option value="sse">auto (SSE)</option>
         </select>
       </label>
-      <div hx-get="/admin/api/pause-state" hx-trigger="load, ai:refresh from:body" hx-swap="innerHTML"></div>
+
+      <!-- Theme toggle -->
       <button id="dark-toggle" class="p-1.5 rounded hover:bg-slate-700 text-slate-300 text-sm" title="Toggle dark mode (D)">🌙</button>
+
+      <!-- Help / keyboard shortcuts -->
       <button id="shortcuts-btn" class="p-1.5 rounded hover:bg-slate-700 text-slate-300 text-xs font-mono" title="Keyboard shortcuts (?)">?</button>
     </div>
   </div>
-  <div id="mobile-nav" class="hidden md:hidden px-4 pb-3 border-t border-slate-800 mt-2 pt-2 flex flex-col gap-1">
-    ${mobileNav}
-  </div>
 </header>
+
+<!-- Mobile drawer backdrop -->
+<div id="mobile-drawer-backdrop" class="fixed inset-0 bg-black/50 z-40 hidden md:hidden" aria-hidden="true"></div>
+
+<!-- Mobile slide-in drawer (left side) -->
+<div id="mobile-drawer" class="fixed inset-y-0 left-0 w-72 bg-slate-900 z-50 overflow-y-auto md:hidden shadow-2xl" aria-hidden="true" aria-label="Navigation drawer">
+  <div class="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+    <a href="/admin/" class="font-semibold text-white tracking-tight">openronin</a>
+    <button id="mobile-drawer-close" class="p-1.5 rounded text-slate-400 hover:text-white hover:bg-slate-700 transition-colors" aria-label="Close navigation">
+      <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+    </button>
+  </div>
+  <nav class="px-3 py-3 flex flex-col gap-0.5" aria-label="Mobile navigation">
+    ${mobileNavHtml}
+  </nav>
+  <!-- Mobile system controls -->
+  <div class="px-4 py-3 border-t border-slate-800 mt-2 space-y-3">
+    <label class="flex items-center justify-between text-sm text-slate-300">
+      <span>Timezone</span>
+      <select id="tz-select-mobile" class="bg-slate-800 text-slate-100 rounded px-1.5 py-1 text-xs border border-slate-700">
+        <option value="Europe/Moscow" selected>MSK</option>
+        <option value="UTC">UTC</option>
+        <option value="local">local</option>
+        <option value="Europe/London">London</option>
+        <option value="America/New_York">New York</option>
+      </select>
+    </label>
+    <label class="flex items-center justify-between text-sm text-slate-300">
+      <span>Refresh</span>
+      <select id="refresh-rate-mobile" class="bg-slate-800 text-slate-100 rounded px-1.5 py-1 text-xs border border-slate-700">
+        <option value="0">off</option>
+        <option value="5">5s</option>
+        <option value="10" selected>10s</option>
+        <option value="60">1m</option>
+        <option value="sse">auto (SSE)</option>
+      </select>
+    </label>
+  </div>
+</div>
 
 <!-- Keyboard shortcuts modal -->
 <div id="shortcuts-modal" class="hidden fixed inset-0 z-50 bg-black/60 flex items-start justify-center pt-16 px-4" role="dialog" aria-modal="true">
@@ -288,21 +443,69 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
     localStorage.setItem('aidev.dark', isDark ? '1' : '0');
   });
 
-  // ── Mobile nav toggle ──────────────────────────────────────────────────────
+  // ── Mobile drawer ──────────────────────────────────────────────────────────
+  var mobileDrawer = document.getElementById('mobile-drawer');
+  var mobileBackdrop = document.getElementById('mobile-drawer-backdrop');
   var navToggle = document.getElementById('nav-toggle');
-  var mobileNav = document.getElementById('mobile-nav');
-  if (navToggle && mobileNav) {
-    navToggle.addEventListener('click', function() { mobileNav.classList.toggle('hidden'); });
+  var drawerClose = document.getElementById('mobile-drawer-close');
+  function openDrawer() {
+    if (!mobileDrawer) return;
+    mobileDrawer.classList.add('open');
+    mobileDrawer.setAttribute('aria-hidden', 'false');
+    if (mobileBackdrop) mobileBackdrop.classList.remove('hidden');
+    if (navToggle) navToggle.setAttribute('aria-expanded', 'true');
+    document.body.style.overflow = 'hidden';
   }
+  function closeDrawer() {
+    if (!mobileDrawer) return;
+    mobileDrawer.classList.remove('open');
+    mobileDrawer.setAttribute('aria-hidden', 'true');
+    if (mobileBackdrop) mobileBackdrop.classList.add('hidden');
+    if (navToggle) navToggle.setAttribute('aria-expanded', 'false');
+    document.body.style.overflow = '';
+  }
+  if (navToggle) navToggle.addEventListener('click', openDrawer);
+  if (drawerClose) drawerClose.addEventListener('click', closeDrawer);
+  if (mobileBackdrop) mobileBackdrop.addEventListener('click', closeDrawer);
+
+  // ── More dropdown ──────────────────────────────────────────────────────────
+  var moreBtn = document.getElementById('more-btn');
+  var moreMenu = document.getElementById('more-menu');
+  function openMore() {
+    if (!moreMenu || !moreBtn) return;
+    moreMenu.classList.add('open');
+    moreBtn.setAttribute('aria-expanded', 'true');
+  }
+  function closeMore() {
+    if (!moreMenu || !moreBtn) return;
+    moreMenu.classList.remove('open');
+    moreBtn.setAttribute('aria-expanded', 'false');
+  }
+  if (moreBtn) {
+    moreBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      moreMenu && moreMenu.classList.contains('open') ? closeMore() : openMore();
+    });
+  }
+  document.addEventListener('click', function(e) {
+    if (moreMenu && moreMenu.classList.contains('open')) {
+      var container = document.getElementById('more-dropdown-container');
+      if (container && !container.contains(e.target)) closeMore();
+    }
+  });
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && moreMenu && moreMenu.classList.contains('open')) closeMore();
+  });
 
   // ── Auto-refresh ───────────────────────────────────────────────────────────
-  // Drive every auto-refreshing HTMX element through one custom event so the
-  // user can throttle the whole page at once via the header dropdown.
-  // Elements opt in with hx-trigger="load, ai:refresh from:body".
   var sel = document.getElementById('refresh-rate');
+  var selMobile = document.getElementById('refresh-rate-mobile');
   if (sel) {
     var saved = localStorage.getItem('aidev.refreshSec');
-    if (saved !== null) sel.value = saved;
+    if (saved !== null) {
+      sel.value = saved;
+      if (selMobile) selMobile.value = saved;
+    }
     var timer = null;
     var sseSource = null;
     function fireRefresh() {
@@ -321,8 +524,7 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
         };
       } catch(e) {}
     }
-    function applyRefresh() {
-      var val = sel.value;
+    function applyRefresh(val) {
       localStorage.setItem('aidev.refreshSec', val);
       if (timer) { clearInterval(timer); timer = null; }
       if (sseSource) { try { sseSource.close(); } catch(e){} sseSource = null; }
@@ -335,14 +537,20 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
         }
       }
     }
-    sel.addEventListener('change', applyRefresh);
-    applyRefresh();
+    sel.addEventListener('change', function() {
+      if (selMobile) selMobile.value = sel.value;
+      applyRefresh(sel.value);
+    });
+    if (selMobile) selMobile.addEventListener('change', function() {
+      sel.value = selMobile.value;
+      applyRefresh(selMobile.value);
+    });
+    applyRefresh(sel.value);
   }
 
   // ── Timezone formatter ─────────────────────────────────────────────────────
-  // Server emits timestamps as <time data-ts="iso-Z">UTC fallback</time>.
-  // We rewrite each element's text in the user's chosen TZ.
   var tzSel = document.getElementById('tz-select');
+  var tzSelMobile = document.getElementById('tz-select-mobile');
   function currentTz() {
     var sv = localStorage.getItem('aidev.tz');
     if (sv) return sv;
@@ -368,13 +576,17 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
       nodes[i].setAttribute('title', d.toISOString() + ' (UTC)');
     }
   }
+  function applyTz(val) {
+    localStorage.setItem('aidev.tz', val);
+    if (tzSel) tzSel.value = val;
+    if (tzSelMobile) tzSelMobile.value = val;
+    relabelTimes();
+  }
   if (tzSel) {
     var savedTz = localStorage.getItem('aidev.tz');
-    if (savedTz) tzSel.value = savedTz;
-    tzSel.addEventListener('change', function() {
-      localStorage.setItem('aidev.tz', tzSel.value);
-      relabelTimes();
-    });
+    if (savedTz) { tzSel.value = savedTz; if (tzSelMobile) tzSelMobile.value = savedTz; }
+    tzSel.addEventListener('change', function() { applyTz(tzSel.value); });
+    if (tzSelMobile) tzSelMobile.addEventListener('change', function() { applyTz(tzSelMobile.value); });
   }
   document.addEventListener('DOMContentLoaded', function(){ relabelTimes(); });
   relabelTimes();
@@ -453,7 +665,6 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   document.addEventListener('keydown', function(e) {
     var tag = document.activeElement && document.activeElement.tagName;
     var inInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
-    // Cmd-K / Ctrl-K always intercept (even in inputs)
     if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
       e.preventDefault();
       if (cmdPalette && !cmdPalette.classList.contains('hidden')) { closePalette(); }
@@ -461,9 +672,8 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
       return;
     }
     if (inInput) return;
-    if (e.key === 'Escape') { closeShortcuts(); closePalette(); closePrDrawer(); return; }
+    if (e.key === 'Escape') { closeShortcuts(); closePalette(); closePrDrawer(); closeDrawer(); return; }
     if (e.key === '?') { openShortcuts(); return; }
-    // g-chord navigation
     if (e.key === 'g' && !e.metaKey && !e.ctrlKey) {
       gPending = true;
       if (gTimer) clearTimeout(gTimer);
@@ -476,7 +686,6 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
       var dest = NAV_MAP[e.key];
       if (dest) { window.location.href = dest; return; }
     }
-    // j/k row navigation in tables
     if (e.key === 'j' || e.key === 'k') {
       var rows = Array.from(document.querySelectorAll('tbody tr'));
       if (rows.length === 0) return;
@@ -487,6 +696,7 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
       rows[next2].scrollIntoView({ block: 'nearest' });
     }
   });
+
   // ── PR Drawer ──────────────────────────────────────────────────────────────
   var prDrawer = document.getElementById('pr-drawer');
   var prDrawerBackdrop = document.getElementById('pr-drawer-backdrop');
@@ -525,6 +735,7 @@ pre,code,textarea{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 </div>
 <div id="pr-drawer-backdrop" class="hidden fixed inset-0 bg-black/20 z-30"></div>
 
+${breadcrumbSection}
 <main class="max-w-6xl mx-auto px-4 py-6">${bodyStr}</main>
 <footer class="max-w-6xl mx-auto px-4 py-3 mt-4 border-t border-subtle">
   <a href="/admin/_tokens" class="text-xs text-muted hover:text-secondary">design tokens</a>

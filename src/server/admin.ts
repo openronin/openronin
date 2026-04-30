@@ -54,6 +54,16 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
 
   app.route("", styleguideRoute());
 
+  // Serve the brand icon used in the header.
+  app.get("/_assets/icon.png", (c) => {
+    const p = resolve(getProjectRoot(), "docs", "assets", "icon.png");
+    if (!existsSync(p)) return c.notFound();
+    const data = readFileSync(p);
+    return new Response(data, {
+      headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+    });
+  });
+
   // -------- Audit middleware: record all mutating admin actions --------
   app.use("*", async (c, next) => {
     await next();
@@ -973,19 +983,6 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
       : YAML.stringify({ provider: row.provider, owner: row.owner, name: row.name });
 
     const body = html`
-      <div class="mb-4 flex items-center gap-3 flex-wrap">
-        <a href="/admin/repos" class="text-blue-700 hover:underline text-sm">&larr; Repos</a>
-        <a
-          href="/admin/repos/${id}/dashboard"
-          class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
-          >Dashboard</a
-        >
-        <a
-          href="/admin/repos/${id}/deploys"
-          class="text-xs px-2 py-1 rounded border border-subtle hover:bg-sunken"
-          >Deploys</a
-        >
-      </div>
       <h1 class="text-2xl font-semibold mb-4">${row.provider}:${row.owner}/${row.name}</h1>
       <div id="flash" class="mb-3"></div>
 
@@ -1131,7 +1128,21 @@ ${yamlText}</textarea
       </section>
     `;
     return c.html(
-      page({ title: row.name, section: "repos", body, isHtmx: isHtmx(c.req.raw.headers) }),
+      page({
+        title: row.name,
+        section: "repos",
+        body,
+        isHtmx: isHtmx(c.req.raw.headers),
+        breadcrumb: [
+          { label: "Repos", href: "/admin/repos" },
+          { label: `${row.owner}/${row.name}` },
+        ],
+        tabs: [
+          { label: "Config", href: `/admin/repos/${id}`, active: true },
+          { label: "Dashboard", href: `/admin/repos/${id}/dashboard` },
+          { label: "Deploys", href: `/admin/repos/${id}/deploys` },
+        ],
+      }),
     );
   });
 
@@ -1204,10 +1215,7 @@ ${yamlText}</textarea
       error: string | null;
     }>;
     const body = html`
-      <div class="mb-4 flex items-center gap-3">
-        <a href="/admin/repos/${id}" class="text-sm text-muted hover:underline">← Repo config</a>
-        <h1 class="text-2xl font-semibold">${row.owner}/${row.name} · Dashboard</h1>
-      </div>
+      <h1 class="text-2xl font-semibold mb-6">${row.owner}/${row.name} · Dashboard</h1>
 
       <div class="grid grid-cols-4 gap-3 mb-6">
         ${statCard("pending", repoStats?.pending ?? 0)}
@@ -1318,6 +1326,15 @@ ${yamlText}</textarea
         section: "repos",
         body,
         isHtmx: isHtmx(c.req.raw.headers),
+        breadcrumb: [
+          { label: "Repos", href: "/admin/repos" },
+          { label: `${row.owner}/${row.name}` },
+        ],
+        tabs: [
+          { label: "Config", href: `/admin/repos/${id}` },
+          { label: "Dashboard", href: `/admin/repos/${id}/dashboard`, active: true },
+          { label: "Deploys", href: `/admin/repos/${id}/deploys` },
+        ],
       }),
     );
   });
@@ -1343,10 +1360,7 @@ ${yamlText}</textarea
       error: string | null;
     }>;
     const body = html`
-      <div class="mb-4 flex items-center gap-3">
-        <a href="/admin/repos/${id}" class="text-sm text-muted hover:underline">← Repo config</a>
-        <h1 class="text-2xl font-semibold">${row.owner}/${row.name} · Deploys</h1>
-      </div>
+      <h1 class="text-2xl font-semibold mb-4">${row.owner}/${row.name} · Deploys</h1>
       <section class="bg-elevated rounded shadow-sm border">
         <table class="w-full text-sm">
           <thead class="bg-surface text-secondary text-left text-xs">
@@ -1406,6 +1420,15 @@ ${yamlText}</textarea
         section: "repos",
         body,
         isHtmx: isHtmx(c.req.raw.headers),
+        breadcrumb: [
+          { label: "Repos", href: "/admin/repos" },
+          { label: `${row.owner}/${row.name}` },
+        ],
+        tabs: [
+          { label: "Config", href: `/admin/repos/${id}` },
+          { label: "Dashboard", href: `/admin/repos/${id}/dashboard` },
+          { label: "Deploys", href: `/admin/repos/${id}/deploys`, active: true },
+        ],
       }),
     );
   });
@@ -2112,12 +2135,9 @@ ${entry.content}</pre
         : raw("");
 
     const body = html`
-      <div class="flex items-center gap-3 mb-4">
-        <a href="/admin/tasks" class="text-sm text-muted hover:underline">← Tasks</a>
-        <h1 class="text-2xl font-semibold">
-          Task #${task.id} · ${task.owner}/${task.repo_name}#${task.external_id}
-        </h1>
-      </div>
+      <h1 class="text-2xl font-semibold mb-4">
+        Task #${task.id} · ${task.owner}/${task.repo_name}#${task.external_id}
+      </h1>
 
       ${timelineHtml}
 
@@ -2199,6 +2219,7 @@ ${decisionPretty}</pre
         section: "tasks",
         body,
         isHtmx: isHtmx(c.req.raw.headers),
+        breadcrumb: [{ label: "Tasks", href: "/admin/tasks" }, { label: `#${task.id}` }],
       }),
     );
   });
@@ -2853,9 +2874,6 @@ ${text}</pre
           : "";
 
     const body = html`
-      <div class="mb-4">
-        <a href="/admin/prompts" class="text-blue-700 hover:underline">&larr; Prompts</a>
-      </div>
       <h1 class="text-2xl font-semibold mb-2">${key}</h1>
       <p class="text-xs text-muted mb-4">
         Builtin: <code>${builtinPath}</code>${builtinExists ? "" : " (missing)"} · Override:
@@ -2891,7 +2909,13 @@ ${text}</textarea
       </form>
     `;
     return c.html(
-      page({ title: key, section: "prompts", body, isHtmx: isHtmx(c.req.raw.headers) }),
+      page({
+        title: key,
+        section: "prompts",
+        body,
+        isHtmx: isHtmx(c.req.raw.headers),
+        breadcrumb: [{ label: "Prompts", href: "/admin/prompts" }, { label: key }],
+      }),
     );
   });
 
@@ -3468,46 +3492,64 @@ function pickContrastColor(hexColor: string): string {
 
 // Pause toggle widget — used both as the header indicator (auto-refreshed)
 // and as the response body of the pause/resume endpoints (so HTMX swaps
-// in-place without a page reload).
+// in-place without a page reload.
+//
+// The hidden `.pause-active` span is a CSS hook: the header rule
+// `#app-header:has(.pause-active)` adds a warning-coloured top border when ON.
 export function pauseControl(paused: boolean, reason?: string): string {
   if (paused) {
-    return html`<form
-      hx-post="/admin/api/resume"
-      hx-target="this"
-      hx-swap="outerHTML"
-      class="inline-flex items-center gap-2"
-    >
+    return html`<div class="inline-flex items-center gap-2">
+      <span class="pause-active hidden"></span>
       <span
-        class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-yellow-200 text-yellow-900 text-xs font-semibold"
+        class="inline-flex items-center gap-1 text-xs text-amber-300"
         title="${reason ?? "system mutations are paused"}"
-        >⏸ paused</span
       >
+        <span class="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block shrink-0"></span>
+        paused
+      </span>
+      <form
+        hx-post="/admin/api/resume"
+        hx-target="#pause-state-container"
+        hx-swap="innerHTML"
+        class="inline"
+      >
+        <button
+          type="submit"
+          role="switch"
+          aria-checked="true"
+          title="Click to resume"
+          class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full bg-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-1 focus:ring-offset-slate-900"
+        >
+          <span
+            class="absolute right-[3px] top-[3px] h-3.5 w-3.5 rounded-full bg-white shadow"
+          ></span>
+        </button>
+      </form>
+    </div>`.toString();
+  }
+  return html`<div class="inline-flex items-center gap-2">
+    <span class="inline-flex items-center gap-1 text-xs text-slate-400">
+      <span class="w-1.5 h-1.5 rounded-full bg-green-400 inline-block shrink-0"></span>
+      running
+    </span>
+    <form
+      hx-post="/admin/api/pause"
+      hx-target="#pause-state-container"
+      hx-swap="innerHTML"
+      hx-confirm="Pause all mutations? Webhooks still queue tasks but the worker will skip them until resumed."
+      class="inline"
+    >
       <button
         type="submit"
-        class="text-xs bg-green-600 hover:bg-green-700 text-white rounded px-2 py-0.5"
+        role="switch"
+        aria-checked="false"
+        title="Click to pause"
+        class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full bg-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-1 focus:ring-offset-slate-900"
       >
-        resume
+        <span class="absolute left-[3px] top-[3px] h-3.5 w-3.5 rounded-full bg-white shadow"></span>
       </button>
-    </form>`.toString();
-  }
-  return html`<form
-    hx-post="/admin/api/pause"
-    hx-target="this"
-    hx-swap="outerHTML"
-    class="inline-flex items-center gap-2"
-  >
-    <span
-      class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-green-200 text-green-900 text-xs font-semibold"
-      >▶ running</span
-    >
-    <button
-      type="submit"
-      class="text-xs bg-yellow-600 hover:bg-yellow-700 text-white rounded px-2 py-0.5"
-      onclick="return confirm('Pause all mutations? Webhooks still queue tasks but the worker will skip them until resumed.')"
-    >
-      pause
-    </button>
-  </form>`.toString();
+    </form>
+  </div>`.toString();
 }
 
 function runStatusClass(status: string): string {
