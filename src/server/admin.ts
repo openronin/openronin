@@ -4100,7 +4100,7 @@ deploy:
   commands:
     # Each command runs in a fresh \`bash -c\` on the openronin host.
     # Use absolute paths — there's no implicit cwd.
-    - cd /opt/myapp && git pull --ff-only
+    - cd /opt/myapp && git checkout main && git pull --ff-only
     - cd /opt/myapp && pnpm install --frozen-lockfile
     - cd /opt/myapp && pnpm build
     # --no-block is critical for self-restart: returns immediately so the
@@ -4131,7 +4131,7 @@ deploy:
   commands:
     # Each command runs in a fresh remote shell. Use absolute paths.
     # No interactive prompts — sudo must be passwordless.
-    - cd /opt/myapp && git pull --ff-only
+    - cd /opt/myapp && git checkout main && git pull --ff-only
     - cd /opt/myapp && npm ci --omit=dev
     - cd /opt/myapp && npm run build
     - sudo /bin/systemctl --no-block restart myapp`;

@@ -4,6 +4,10 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Fixed — deploy lane: robust against non-trigger-branch checkout
+
+Deploy documentation and the admin UI config example now use `git checkout <branch> && git pull --ff-only` instead of a bare `git pull --ff-only`. This prevents failures when the target directory is checked out on a branch other than `trigger_branch` (e.g. after a squash-merge deletes the feature branch that the directory happened to be on).
+
 ### Added — Director (autonomous PM layer), foundation
 
 A new optional service, `openronin-director.service`, adds a third architectural layer above the existing supervisor/worker split. The Director runs as a separate systemd unit but shares this codebase, the SQLite DB, and `OPENRONIN_DATA_DIR`. It's the source of intent — what the project should work on next — where the existing daemon is purely reactive to events.

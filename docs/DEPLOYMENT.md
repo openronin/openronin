@@ -257,7 +257,7 @@ deploy:
   bot_login: openronin-bot       # whatever your bot's GitHub username is
   require_bot_push: true
   commands:
-    - cd /opt/openronin && git pull --ff-only
+    - cd /opt/openronin && git checkout main && git pull --ff-only
     - cd /opt/openronin && pnpm install --frozen-lockfile
     - cd /opt/openronin && pnpm build
     - sudo /bin/systemctl --no-block restart openronin
