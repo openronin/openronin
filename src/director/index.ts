@@ -15,10 +15,9 @@ import type { RepoConfig, RuntimeConfig } from "../config/schema.js";
 import { repoKey } from "../config/schema.js";
 import { initDb, type Db } from "../storage/db.js";
 import { syncReposFromConfig } from "../storage/repos.js";
-import { ensureBudgetState, rolloverDayIfNeeded, markTick, checkBudgetGate } from "./budget.js";
+import { ensureBudgetState, rolloverDayIfNeeded } from "./budget.js";
 import { appendMessage } from "./chat.js";
-import { captureCharterVersion } from "./charter.js";
-import { recordDecision } from "./decisions.js";
+import { runTick } from "./tick.js";
 import type { DirectorConfig } from "./types.js";
 
 const SERVICE_LOOP_INTERVAL_MS = 60_000; // wake up every minute
@@ -63,56 +62,19 @@ function shouldTickNow(state: { lastTickAt: string | null }, cadenceHours: numbe
   return elapsedMs >= cadenceHours * 3600_000;
 }
 
-async function tickNoOp(db: Db, target: RepoLookup): Promise<void> {
-  const { repoId, repo, director } = target;
-  if (!director.charter) return;
-
-  rolloverDayIfNeeded(db, repoId);
-  const state = ensureBudgetState(db, repoId, director.budget);
-
-  const gate = checkBudgetGate(state, director.budget);
-  if (!gate.ok) {
-    appendMessage(db, {
-      repoId,
-      role: "system",
-      type: "tick_log",
-      body: `tick skipped: ${gate.reason}`,
-      metadata: { repo: repoKey(repo), mode: director.mode },
-    });
-    return;
-  }
-
-  const charterVersion = captureCharterVersion(db, repoId, director.charter);
-
-  const decision = recordDecision(db, {
-    repoId,
-    decisionType: "no_op",
-    rationale:
-      "Foundation tick: scheduler+chat+charter+budget infrastructure is wired. " +
-      "Real LLM-driven planning lands in PR #22. This entry confirms the loop " +
-      "ran end-to-end (charter parsed, budget gate passed, message appended).",
-    charterVersion,
-    stateSnapshot: {
-      mode: director.mode,
-      cadenceHours: director.cadence_hours,
-      charterVersion,
-      spentTodayUsd: state.spentTodayUsd,
-      spentTodayThinkUsd: state.spentTodayThinkUsd,
-      failureStreak: state.failureStreak,
-    },
-    outcome: "dry_run",
+async function executeTick(db: Db, target: RepoLookup, dataDir: string): Promise<void> {
+  const result = await runTick({
+    db,
+    repoId: target.repoId,
+    repo: target.repo,
+    director: target.director,
+    dataDir,
   });
-
-  appendMessage(db, {
-    repoId,
-    role: "director",
-    type: "tick_log",
-    body: `tick fired (mode=${director.mode}, charter v${charterVersion}). Foundation phase: no planning yet.`,
-    metadata: { repo: repoKey(repo), decisionId: decision.id },
-    decisionId: decision.id,
-  });
-
-  markTick(db, repoId);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[director] tick on ${repoKey(target.repo)}: ${result.status} — ${result.detail} ` +
+      `(${result.decisionsLogged} decisions, $${result.costUsd.toFixed(4)})`,
+  );
 }
 
 let stopping = false;
@@ -129,7 +91,7 @@ async function loopOnce(db: Db, config: RuntimeConfig): Promise<void> {
     const state = ensureBudgetState(db, t.repoId, t.director.budget);
     if (!shouldTickNow(state, t.director.cadence_hours)) continue;
     try {
-      await tickNoOp(db, t);
+      await executeTick(db, t, config.dataDir);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       try {
