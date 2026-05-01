@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { basicAuth } from "hono/basic-auth";
 import { styleguideRoute } from "./styleguide.js";
+import { directorAdminRoute } from "./admin-director.js";
 import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -58,6 +59,7 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
   }
 
   app.route("", styleguideRoute());
+  app.route("/director", directorAdminRoute({ db, getConfig }));
 
   // Serve the brand icon used in the header.
   app.get("/_assets/icon.png", (c) => {

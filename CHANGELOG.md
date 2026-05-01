@@ -4,6 +4,23 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Added — Director (autonomous PM layer), foundation
+
+A new optional service, `openronin-director.service`, adds a third architectural layer above the existing supervisor/worker split. The Director runs as a separate systemd unit but shares this codebase, the SQLite DB, and `OPENRONIN_DATA_DIR`. It's the source of intent — what the project should work on next — where the existing daemon is purely reactive to events.
+
+This release is the **foundation only**: schema, scaffolding, charter loader, adaptive-budget tracker, decision audit trail, chat thread data layer, read-only admin timeline at `/admin/director`. The service ticks per `cadence_hours`, captures the charter version, and writes a no-op message to its chat. The LLM-driven planning tick lands in the next release.
+
+- New schema migration **v12** — `director_messages`, `director_decisions`, `director_charter_versions`, `director_budget_state`. All new tables; nothing existing is touched.
+- New per-repo YAML block: `director:` (Zod-validated). Default disabled; needs `enabled: true` plus a non-empty `charter` to do anything.
+- New entry point: `node dist/index.js director:run` — the long-running director service.
+- New env vars: `OPENRONIN_DIRECTOR_DISABLED` (master kill switch), `OPENRONIN_DIRECTOR_TELEGRAM_TOKEN` (reserved for the upcoming Telegram bridge).
+- New systemd unit template at `deploy/openronin-director.service`.
+- New docs: `docs/DIRECTOR.md`.
+- 11 new unit tests covering migration, charter parsing/versioning/dedup, chat append + recent + since helpers, decision lifecycle, budget gate (paused / failure-streak / think / daily / weekly).
+
+Safe to upgrade without enabling: existing functionality is unchanged. The director sub-route at `/admin/director` returns "no director-enabled repos" until you opt in per repo.
+
+
 ## [0.1.0] — Initial public release
 
 First public release. The codebase has been used in production on a handful of personal repos for several weeks before this point; this release is the cleaned-up, sanitized, and re-licensed version of that work.

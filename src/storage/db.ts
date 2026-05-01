@@ -224,4 +224,73 @@ function applyMigrations(db: Db): void {
       "INSERT INTO schema_version (version, applied_at) VALUES (11, datetime('now'))",
     ).run();
   }
+
+  // v12 — Director (autonomous PM layer). Adds:
+  //   • director_messages   — chat thread (director ↔ user) per repo
+  //   • director_decisions  — every decision the director made, with rationale
+  //   • director_charter_versions — versioned charter snapshots per repo
+  //   • director_budget_state — adaptive budget + failure-streak per repo
+  // None of this affects the existing scheduler/lanes; the director runs as a
+  // separate systemd unit that shares this DB. See src/director/.
+  if (current < 12) {
+    db.exec(`
+      CREATE TABLE director_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+        ts TEXT NOT NULL DEFAULT (datetime('now')),
+        role TEXT NOT NULL CHECK (role IN ('director','user','system')),
+        type TEXT NOT NULL CHECK (type IN (
+          'status','proposal','question','directive','answer','veto','report','tick_log','error'
+        )),
+        body TEXT NOT NULL,
+        metadata TEXT,
+        parent_id INTEGER REFERENCES director_messages(id) ON DELETE SET NULL,
+        decision_id INTEGER
+      );
+      CREATE INDEX idx_director_messages_repo_ts ON director_messages(repo_id, ts DESC);
+
+      CREATE TABLE director_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+        ts TEXT NOT NULL DEFAULT (datetime('now')),
+        decision_type TEXT NOT NULL,
+        rationale TEXT NOT NULL,
+        charter_version INTEGER,
+        state_snapshot TEXT,
+        payload TEXT,
+        outcome TEXT NOT NULL DEFAULT 'pending',
+        outcome_ts TEXT,
+        outcome_details TEXT,
+        cost_usd REAL NOT NULL DEFAULT 0
+      );
+      CREATE INDEX idx_director_decisions_repo_ts ON director_decisions(repo_id, ts DESC);
+      CREATE INDEX idx_director_decisions_pending ON director_decisions(outcome) WHERE outcome = 'pending';
+
+      CREATE TABLE director_charter_versions (
+        repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        charter_yaml TEXT NOT NULL,
+        effective_from TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (repo_id, version)
+      );
+
+      CREATE TABLE director_budget_state (
+        repo_id INTEGER PRIMARY KEY REFERENCES repos(id) ON DELETE CASCADE,
+        daily_cap_usd REAL NOT NULL DEFAULT 2.0,
+        weekly_cap_usd REAL NOT NULL DEFAULT 10.0,
+        spent_today_usd REAL NOT NULL DEFAULT 0,
+        spent_week_usd REAL NOT NULL DEFAULT 0,
+        spent_today_think_usd REAL NOT NULL DEFAULT 0,
+        failure_streak INTEGER NOT NULL DEFAULT 0,
+        last_tick_at TEXT,
+        last_reset_day TEXT,
+        paused INTEGER NOT NULL DEFAULT 0,
+        pause_reason TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    db.prepare(
+      "INSERT INTO schema_version (version, applied_at) VALUES (12, datetime('now'))",
+    ).run();
+  }
 }

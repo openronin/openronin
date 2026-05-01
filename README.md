@@ -77,6 +77,7 @@ That entire flow happens without you visiting any UI besides GitHub. The agent i
 
 ```mermaid
 flowchart TD
+    Z["👔 Director<br/>(opt-in, separate service)"] -. "proposes issue" .-> A
     A["📝 You file an issue<br/>(label: openronin:do-it)"] --> B{"🧭 Supervisor<br/>reads + analyzes"}
     B -- "ambiguous" --> C["💬 Posts clarifying questions<br/>waits for your reply"]
     C --> A
@@ -89,8 +90,9 @@ flowchart TD
     H --> I["🚀 Auto-deploy<br/>(opt-in)"]
 ```
 
-Two engines, split by cost and capability:
+Three layers, split by role and cost:
 
+- **Director** *(opt-in, separate service).* Reads a per-repo charter and proposes what to work on next. Never edits code. Lives at `/admin/director`. See [docs/DIRECTOR.md](docs/DIRECTOR.md).
 - **Supervisor.** Reads issues, classifies, asks clarifying questions, plans. Cheap and fast — handles the bulk of the conversational work.
 - **Coder agent.** The only thing allowed to mutate code, and only inside an isolated worktree.
 
@@ -153,6 +155,14 @@ Tasks travel through **lanes**. Each lane has a trigger, an engine, and an outpu
 | **deploy** *(opt-in)* | push to trigger branch | shell | run configured commands |
 
 The router is a single function (`pickLane` in `src/scheduler/worker.ts`) — no opaque agent loop deciding what's next.
+
+## Director — autonomous PM (opt-in)
+
+Want the agent to also pick *what* to work on, not just execute issues you file? There's a separate **Director** service that reads a per-repo charter (vision, priorities, definition-of-done, out-of-bounds zones) and proposes work items autonomously. It runs as its own systemd unit, has its own adaptive budget, and writes everything it does to a chat thread you can read at `/admin/director`.
+
+Five autonomy levels — `disabled` → `dry_run` → `propose` → `semi_auto` → `full_auto`. Start in `dry_run` for a few days to calibrate the charter; ramp up as confidence grows. Default authority is conservative (no merging, no closing issues, no charter modification without explicit opt-in).
+
+See [docs/DIRECTOR.md](docs/DIRECTOR.md) for the full schema and rollout plan.
 
 Full reference: **[docs/LANES.md](docs/LANES.md)**.
 

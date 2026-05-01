@@ -4,7 +4,11 @@ Instructions for Claude Code (and other AI coding agents) working on this reposi
 
 ## What this is
 
-`openronin` — a self-hosted AI developer agent. It watches repos, picks up issues, opens PRs, iterates on review feedback, and merges when ready. Architecturally it's a **MIMO supervisor + Claude Code worker** split: cheap classifier routes, expensive coder writes.
+`openronin` — a self-hosted AI developer agent. It watches repos, picks up issues, opens PRs, iterates on review feedback, and merges when ready. Architecturally it's a three-layer split:
+
+1. **Director** *(opt-in, separate systemd unit)* — proactive PM layer. Reads a per-repo charter and decides what the project should work on next. Emits decisions (create issue, comment, approve merge) into a chat thread. **Never edits source files.** See `docs/DIRECTOR.md` and `src/director/`.
+2. **Supervisor** (MIMO) — cheap classifier that routes lanes.
+3. **Worker** (Claude Code) — the only engine allowed to mutate code.
 
 The agent eats its own dog food — most lanes after the bootstrap landed via the bot's own pipeline. If you're reading this as Claude Code working on this repo, you're literally working on yourself.
 
@@ -36,13 +40,16 @@ The agent eats its own dog food — most lanes after the bootstrap landed via th
 - **Iteration counter** (pr_dialog) only bumps on **successful pushes**. Failed iterations don't burn the budget.
 - **SQLite UTC parsing.** Always use `parseSqliteUtc()` from `src/lib/time.ts` when comparing DB cutoffs to API ISO timestamps. Bare `new Date(sqlite_text)` shifts by the server's local TZ.
 - **Force-push.** Always pass an explicit `<branch>:<sha>` lease to `git push --force-with-lease`. Bare form fails with `(stale info)` after a single-branch clone.
+- **Director boundary.** The Director (`src/director/`) is read-only on source code. It only writes to its own DB tables (`director_*`) and emits decisions that the existing lane infrastructure carries out. Don't have it call `runPatch` directly, don't have it touch worktrees. If you're tempted to skip the lane router from the Director, you're doing something wrong.
+- **Charter-pin every Director decision.** Each row in `director_decisions` must reference the `charter_version` it was produced under. Never write a decision without one — the audit trail breaks.
 
 ## Project layout
 
 ```
 src/
-├── index.ts                CLI vs server entry, graceful SIGTERM
-├── server/                 Hono: admin (HTMX+Tailwind CDN), webhooks, healthz, /api, layout
+├── index.ts                CLI vs server vs director:run entry, graceful SIGTERM
+├── director/               Director: types, charter, chat, decisions, budget, service entry (separate systemd unit)
+├── server/                 Hono: admin (HTMX+Tailwind CDN), webhooks, healthz, /api, layout, admin-director
 ├── supervisor/             selectEngine + runJob (cost cap + RateLimited handling)
 ├── engines/                mimo (cost calc), claude-code (RateLimited detect), anthropic, multi-agent
 ├── providers/              vcs interface; github, gitlab; tracker interface; jira, todoist, telegram

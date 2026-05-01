@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  BudgetConfigSchema,
+  CharterSchema,
+  DirectorAuthoritySchema,
+  DirectorModeSchema,
+} from "../director/types.js";
 
 // Server config (loaded from env on top, optionally overridden by openronin.yaml/server)
 export const ServerConfigSchema = z.object({
@@ -218,6 +224,21 @@ export const RepoConfigSchema = z.object({
   awaiting_action_label: z.string().default("openronin:awaiting-action"),
   acknowledge_with_reaction: z.boolean().default(true),
   acknowledge_with_comment: z.boolean().default(true),
+  // Director — autonomous PM layer (opt-in per repo). When `enabled: true`
+  // and a `charter` is supplied, the openronin-director.service will tick
+  // this repo. Without a charter the director silently skips. See
+  // docs/DIRECTOR.md for the full schema.
+  director: z
+    .object({
+      enabled: z.boolean().default(false),
+      mode: DirectorModeSchema.default("dry_run"),
+      cadence_hours: z.number().positive().default(6),
+      bot_prefix: z.string().default("👔 director:"),
+      charter: CharterSchema.optional(),
+      budget: BudgetConfigSchema,
+      authority: DirectorAuthoritySchema,
+    })
+    .default({}),
 });
 
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;
