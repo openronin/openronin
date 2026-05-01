@@ -4,6 +4,17 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Fixed — director: engine fallback and failure-streak hardening
+
+The director's LLM-tick previously assumed `ANTHROPIC_API_KEY` was always available, throwing on construction when it wasn't and looping on the same error every minute (because the construction-failure path didn't mark the tick or bump the failure streak). Now:
+
+- Engine selection auto-detects: **Anthropic** if `ANTHROPIC_API_KEY` is set, else **MIMO** if `XIAOMI_MIMO_API_KEY` is set, else fail with an actionable error message.
+- Override via `OPENRONIN_DIRECTOR_THINK_ENGINE=anthropic|mimo`.
+- Engine-construction errors and schema-invalid LLM output now both `markTick` + `bumpFailureStreak` — so transient errors don't infinite-loop and the existing `pause_on_failure_streak` gate (default 3) actually trips.
+- Successful ticks `resetFailureStreak` so a few intermittent failures don't permanently pause the director.
+- Per-engine model defaults: `claude-sonnet-4-6` for Anthropic, `mimo-v2.5-pro` for MIMO.
+
+
 ### Fixed — deploy lane: robust against non-trigger-branch checkout
 
 Deploy documentation and the admin UI config example now use `git checkout <branch> && git pull --ff-only` instead of a bare `git pull --ff-only`. This prevents failures when the target directory is checked out on a branch other than `trigger_branch` (e.g. after a squash-merge deletes the feature branch that the directory happened to be on).

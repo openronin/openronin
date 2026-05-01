@@ -20,15 +20,18 @@ import type { Db } from "../storage/db.js";
 import type { RepoConfig } from "../config/schema.js";
 import { repoKey } from "../config/schema.js";
 import { AnthropicEngine } from "../engines/anthropic.js";
+import { MimoEngine } from "../engines/mimo.js";
 import type { Engine } from "../engines/types.js";
 import { appendMessage } from "./chat.js";
 import { captureCharterVersion } from "./charter.js";
 import {
-  ensureBudgetState,
-  rolloverDayIfNeeded,
+  bumpFailureStreak,
   checkBudgetGate,
-  recordThinkSpend,
+  ensureBudgetState,
   markTick,
+  recordThinkSpend,
+  resetFailureStreak,
+  rolloverDayIfNeeded,
 } from "./budget.js";
 import { recordDecision } from "./decisions.js";
 import { captureStateSnapshot } from "./state.js";
@@ -37,7 +40,8 @@ import { parseTickOutput, type ParsedDecision, type TickOutput } from "./decisio
 import type { DecisionType, DirectorConfig } from "./types.js";
 import YAML from "yaml";
 
-const DEFAULT_THINK_MODEL = "claude-sonnet-4-6";
+const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
+const DEFAULT_MIMO_MODEL = "mimo-v2.5-pro";
 const TICK_TIMEOUT_MS = 120_000; // 2 min — generous for a 30k-token thinking call
 
 export type TickRunOptions = {
@@ -95,8 +99,27 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
     repoConfig: repo,
   });
 
-  const engine = opts.engineFactory ? opts.engineFactory() : defaultEngineFactory();
-  const model = process.env.OPENRONIN_DIRECTOR_THINK_MODEL ?? DEFAULT_THINK_MODEL;
+  let engine: Engine;
+  let model: string;
+  try {
+    ({ engine, model } = opts.engineFactory
+      ? { engine: opts.engineFactory(), model: process.env.OPENRONIN_DIRECTOR_THINK_MODEL ?? "" }
+      : selectThinkEngine());
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    appendMessage(db, {
+      repoId,
+      role: "system",
+      type: "error",
+      body: `director cannot start: ${detail}\n\nSet OPENRONIN_DIRECTOR_THINK_ENGINE (anthropic | mimo) and the matching API key in $OPENRONIN_DATA_DIR/director.env (or secrets.env).`,
+      metadata: { repo: repoKey(repo), mode: director.mode, charterVersion },
+    });
+    // Treat construction failure as a regular tick failure so we don't loop:
+    // mark the tick + bump the streak. The streak gate will pause us after N.
+    markTick(db, repoId);
+    bumpFailureStreak(db, repoId);
+    return { status: "error", detail, decisionsLogged: 0, costUsd: 0 };
+  }
 
   let llmResult;
   try {
@@ -114,9 +137,10 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
       role: "system",
       type: "error",
       body: `LLM call failed: ${detail}`,
-      metadata: { repo: repoKey(repo), mode: director.mode, charterVersion },
+      metadata: { repo: repoKey(repo), mode: director.mode, charterVersion, engine: engine.id },
     });
     markTick(db, repoId);
+    bumpFailureStreak(db, repoId);
     return { status: "error", detail, decisionsLogged: 0, costUsd: 0 };
   }
 
@@ -140,6 +164,7 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
       },
     });
     markTick(db, repoId);
+    bumpFailureStreak(db, repoId);
     return { status: "error", detail: "schema-invalid", decisionsLogged: 0, costUsd: cost };
   }
 
@@ -170,6 +195,10 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
   });
 
   markTick(db, repoId);
+  // Successful tick clears any prior failure streak — next failure starts
+  // counting fresh, so a run of intermittent errors doesn't permanently
+  // pause the director after the first 3 transient hiccups.
+  resetFailureStreak(db, repoId);
 
   return {
     status: "ok",
@@ -179,10 +208,40 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
   };
 }
 
-function defaultEngineFactory(): Engine {
-  return new AnthropicEngine({
-    defaultModel: process.env.OPENRONIN_DIRECTOR_THINK_MODEL ?? DEFAULT_THINK_MODEL,
-  });
+// Pick which engine to use for the planning tick. Priority:
+//   1. Explicit override via OPENRONIN_DIRECTOR_THINK_ENGINE env (anthropic | mimo)
+//   2. Anthropic if ANTHROPIC_API_KEY is set
+//   3. MIMO if XIAOMI_MIMO_API_KEY is set
+//   4. Throw — caller surfaces this to the chat as an actionable error
+//
+// The model can be overridden via OPENRONIN_DIRECTOR_THINK_MODEL; defaults
+// are engine-specific. MIMO's quality is lower than Sonnet but its JSON-mode
+// is solid and the cost is ~10x cheaper, so it's a fine fallback for a
+// dry_run-mode director that's still being calibrated.
+export function selectThinkEngine(): { engine: Engine; model: string } {
+  const override = (process.env.OPENRONIN_DIRECTOR_THINK_ENGINE ?? "").toLowerCase();
+  const userModel = process.env.OPENRONIN_DIRECTOR_THINK_MODEL;
+  const haveAnthropic = !!process.env.ANTHROPIC_API_KEY;
+  const haveMimo = !!process.env.XIAOMI_MIMO_API_KEY;
+
+  if (override === "anthropic") {
+    if (!haveAnthropic)
+      throw new Error("OPENRONIN_DIRECTOR_THINK_ENGINE=anthropic but ANTHROPIC_API_KEY not set");
+    return { engine: new AnthropicEngine({}), model: userModel ?? DEFAULT_ANTHROPIC_MODEL };
+  }
+  if (override === "mimo") {
+    if (!haveMimo)
+      throw new Error("OPENRONIN_DIRECTOR_THINK_ENGINE=mimo but XIAOMI_MIMO_API_KEY not set");
+    return { engine: new MimoEngine({}), model: userModel ?? DEFAULT_MIMO_MODEL };
+  }
+
+  if (haveAnthropic) {
+    return { engine: new AnthropicEngine({}), model: userModel ?? DEFAULT_ANTHROPIC_MODEL };
+  }
+  if (haveMimo) {
+    return { engine: new MimoEngine({}), model: userModel ?? DEFAULT_MIMO_MODEL };
+  }
+  throw new Error("no LLM API key found (ANTHROPIC_API_KEY or XIAOMI_MIMO_API_KEY required)");
 }
 
 function recordTickDecisions(
