@@ -17,6 +17,7 @@ import { recentMessages } from "../dist/director/chat.js";
 import { recentDecisions, pendingDecisions } from "../dist/director/decisions.js";
 import { ensureBudgetState } from "../dist/director/budget.js";
 import { parseTickOutput } from "../dist/director/decision-schema.js";
+import { selectThinkEngine } from "../dist/director/tick.js";
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), "openronin-tick-test-"));
@@ -302,6 +303,104 @@ test("runTick: paused budget skips the tick without LLM call", async () => {
     const messages = recentMessages(db, repoId, 5);
     assert.equal(messages[0].type, "tick_log");
     assert.match(messages[0].body, /paused/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
+test("selectThinkEngine: prefers Anthropic when both keys are set", () => {
+  const orig = { ant: process.env.ANTHROPIC_API_KEY, mimo: process.env.XIAOMI_MIMO_API_KEY };
+  process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+  process.env.XIAOMI_MIMO_API_KEY = "xm-test";
+  try {
+    const { engine } = selectThinkEngine();
+    assert.equal(engine.id, "anthropic");
+  } finally {
+    if (orig.ant === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = orig.ant;
+    if (orig.mimo === undefined) delete process.env.XIAOMI_MIMO_API_KEY;
+    else process.env.XIAOMI_MIMO_API_KEY = orig.mimo;
+  }
+});
+
+test("selectThinkEngine: falls back to MIMO when only MIMO key is set", () => {
+  const orig = { ant: process.env.ANTHROPIC_API_KEY, mimo: process.env.XIAOMI_MIMO_API_KEY };
+  delete process.env.ANTHROPIC_API_KEY;
+  process.env.XIAOMI_MIMO_API_KEY = "xm-test";
+  try {
+    const { engine } = selectThinkEngine();
+    assert.equal(engine.id, "mimo");
+  } finally {
+    if (orig.ant !== undefined) process.env.ANTHROPIC_API_KEY = orig.ant;
+    if (orig.mimo === undefined) delete process.env.XIAOMI_MIMO_API_KEY;
+    else process.env.XIAOMI_MIMO_API_KEY = orig.mimo;
+  }
+});
+
+test("selectThinkEngine: throws when no key is set", () => {
+  const orig = { ant: process.env.ANTHROPIC_API_KEY, mimo: process.env.XIAOMI_MIMO_API_KEY };
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.XIAOMI_MIMO_API_KEY;
+  try {
+    assert.throws(() => selectThinkEngine(), /no LLM API key/);
+  } finally {
+    if (orig.ant !== undefined) process.env.ANTHROPIC_API_KEY = orig.ant;
+    if (orig.mimo !== undefined) process.env.XIAOMI_MIMO_API_KEY = orig.mimo;
+  }
+});
+
+test("selectThinkEngine: explicit override respected", () => {
+  const orig = {
+    ant: process.env.ANTHROPIC_API_KEY,
+    mimo: process.env.XIAOMI_MIMO_API_KEY,
+    eng: process.env.OPENRONIN_DIRECTOR_THINK_ENGINE,
+  };
+  process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+  process.env.XIAOMI_MIMO_API_KEY = "xm-test";
+  process.env.OPENRONIN_DIRECTOR_THINK_ENGINE = "mimo";
+  try {
+    const { engine } = selectThinkEngine();
+    assert.equal(engine.id, "mimo", "override forces mimo even when anthropic key is present");
+  } finally {
+    if (orig.ant === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = orig.ant;
+    if (orig.mimo === undefined) delete process.env.XIAOMI_MIMO_API_KEY;
+    else process.env.XIAOMI_MIMO_API_KEY = orig.mimo;
+    if (orig.eng === undefined) delete process.env.OPENRONIN_DIRECTOR_THINK_ENGINE;
+    else process.env.OPENRONIN_DIRECTOR_THINK_ENGINE = orig.eng;
+  }
+});
+
+test("runTick: failure-streak bumps on error and resets on success", async () => {
+  const { db, dir, repoId } = freshDb();
+  try {
+    // First a failed tick (invalid JSON)
+    await runTick({
+      db,
+      repoId,
+      repo: sampleRepo,
+      director: sampleDirector,
+      dataDir: dir,
+      engineFactory: mockEngine({ decisions: [{ type: "bogus", rationale: "x" }] }),
+    });
+    let bs = ensureBudgetState(db, repoId, sampleBudget);
+    assert.equal(bs.failureStreak, 1);
+
+    // Now a successful tick
+    await runTick({
+      db,
+      repoId,
+      repo: sampleRepo,
+      director: sampleDirector,
+      dataDir: dir,
+      engineFactory: mockEngine({
+        observations: "Project state is steady; nothing urgent in the queue right now.",
+        reasoning: "Reliability and observability priorities both have recent coverage.",
+        decisions: [{ type: "no_op", rationale: "Nothing actionable this tick." }],
+      }),
+    });
+    bs = ensureBudgetState(db, repoId, sampleBudget);
+    assert.equal(bs.failureStreak, 0, "successful tick must reset streak");
   } finally {
     cleanup(dir);
   }
