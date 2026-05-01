@@ -9,6 +9,14 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const cmd = argv[0];
 
+  // Director runs as a separate systemd unit but ships in the same bundle.
+  // It's a long-running process like `server`, not a one-shot CLI command.
+  if (cmd === "director:run") {
+    const { runDirectorService } = await import("./director/index.js");
+    await runDirectorService();
+    return;
+  }
+
   const isServerMode = !cmd || cmd === "server";
   if (!isServerMode) {
     const result = await runCli(argv);

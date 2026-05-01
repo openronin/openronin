@@ -1,0 +1,33 @@
+[Unit]
+Description=openronin Director — autonomous PM layer
+Documentation=https://github.com/openronin/openronin/blob/main/docs/DIRECTOR.md
+After=network-online.target openronin.service
+Wants=openronin.service
+
+[Service]
+Type=simple
+User=claude
+WorkingDirectory=/opt/openronin
+# Re-uses the main openronin secrets (GITHUB_TOKEN, ANTHROPIC_API_KEY, ...).
+# Director-specific values (OPENRONIN_DIRECTOR_TELEGRAM_TOKEN, etc.) live
+# in director.env — kept separate so the main service doesn't have to load
+# them and so they can be rotated independently.
+EnvironmentFile=/var/lib/openronin/secrets.env
+EnvironmentFile=-/var/lib/openronin/director.env
+Environment=OPENRONIN_DATA_DIR=/var/lib/openronin
+ExecStart=/usr/bin/node /opt/openronin/dist/index.js director:run
+# Don't tear down child processes — same trick as the main service uses for
+# self-deploy. The director is a simple loop with no children right now,
+# but matching behaviour keeps deploys uniform.
+KillMode=process
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=10s
+# Modest cap so runaway prompts can't OOM the host.
+MemoryMax=512M
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openronin-director
+
+[Install]
+WantedBy=multi-user.target
