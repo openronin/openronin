@@ -225,11 +225,13 @@ export function selectThinkEngine(): { engine: Engine; model: string } {
   const haveMimo = !!process.env.XIAOMI_MIMO_API_KEY;
 
   if (override === "anthropic") {
-    if (!haveAnthropic) throw new Error("OPENRONIN_DIRECTOR_THINK_ENGINE=anthropic but ANTHROPIC_API_KEY not set");
+    if (!haveAnthropic)
+      throw new Error("OPENRONIN_DIRECTOR_THINK_ENGINE=anthropic but ANTHROPIC_API_KEY not set");
     return { engine: new AnthropicEngine({}), model: userModel ?? DEFAULT_ANTHROPIC_MODEL };
   }
   if (override === "mimo") {
-    if (!haveMimo) throw new Error("OPENRONIN_DIRECTOR_THINK_ENGINE=mimo but XIAOMI_MIMO_API_KEY not set");
+    if (!haveMimo)
+      throw new Error("OPENRONIN_DIRECTOR_THINK_ENGINE=mimo but XIAOMI_MIMO_API_KEY not set");
     return { engine: new MimoEngine({}), model: userModel ?? DEFAULT_MIMO_MODEL };
   }
 
