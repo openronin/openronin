@@ -106,7 +106,11 @@ function renderMessage(m: DirectorMessage): TrustedHtml {
         ${badge({ label: m.type, tone: messageTypeBadgeTone(m.type) })}
         <span>${time(m.ts)}</span>
       </div>
-      <div class="rounded-md border border-[var(--border)] ${bubble} p-3 text-sm whitespace-pre-wrap">${m.body}</div>
+      <div
+        class="rounded-md border border-[var(--border)] ${bubble} p-3 text-sm whitespace-pre-wrap"
+      >
+        ${m.body}
+      </div>
     </div>
   `;
 }
@@ -125,10 +129,14 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
               body: html`
                 <p class="text-sm text-[var(--text-2)]">
                   Enable the Director on a repo by setting
-                  <code class="code-inline">director.enabled: true</code> and providing
-                  a <code class="code-inline">director.charter</code> in its YAML config
-                  under <code class="code-inline">$OPENRONIN_DATA_DIR/config/repos/</code>.
-                  See <a href="https://github.com/openronin/openronin/blob/main/docs/DIRECTOR.md" class="link">docs/DIRECTOR.md</a>.
+                  <code class="code-inline">director.enabled: true</code> and providing a
+                  <code class="code-inline">director.charter</code> in its YAML config under
+                  <code class="code-inline">$OPENRONIN_DATA_DIR/config/repos/</code>. See
+                  <a
+                    href="https://github.com/openronin/openronin/blob/main/docs/DIRECTOR.md"
+                    class="link"
+                    >docs/DIRECTOR.md</a
+                  >.
                 </p>
               `,
             })
@@ -136,7 +144,10 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
               <div class="grid gap-3">
                 ${entries.map(
                   (e) => html`
-                    <a href="/admin/director/${e.slug}" class="card hover:border-[var(--border-strong)]">
+                    <a
+                      href="/admin/director/${e.slug}"
+                      class="card hover:border-[var(--border-strong)]"
+                    >
                       <div class="flex items-center justify-between">
                         <div class="flex flex-col">
                           <div class="font-medium">${e.owner}/${e.name}</div>
@@ -197,7 +208,11 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
                 <div class="text-xs text-[var(--text-2)]">Priorities</div>
                 <ul class="text-sm list-disc pl-5">
                   ${charter.charter.priorities.map(
-                    (p) => html`<li><code class="code-inline">${p.id}</code> (${p.weight.toFixed(2)}) — ${p.rubric}</li>`,
+                    (p) =>
+                      html`<li>
+                        <code class="code-inline">${p.id}</code> (${p.weight.toFixed(2)}) —
+                        ${p.rubric}
+                      </li>`,
                   )}
                 </ul>
               </div>
@@ -221,13 +236,47 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       body: html`
         <table class="data-table text-sm w-full">
           <tbody>
-            <tr><td>Mode</td><td>${badge({ label: entry.mode, tone: modeBadgeTone(entry.mode) })}</td></tr>
-            <tr><td>Cadence</td><td>${repo.director.cadence_hours}h</td></tr>
-            <tr><td>Daily cap</td><td>$${budgetState.dailyCapUsd.toFixed(2)} (spent $${budgetState.spentTodayUsd.toFixed(2)})</td></tr>
-            <tr><td>Weekly cap</td><td>$${budgetState.weeklyCapUsd.toFixed(2)} (spent $${budgetState.spentWeekUsd.toFixed(2)})</td></tr>
-            <tr><td>Think today</td><td>$${budgetState.spentTodayThinkUsd.toFixed(4)} / $${repo.director.budget.think_daily_usd.toFixed(2)}</td></tr>
-            <tr><td>Failure streak</td><td>${budgetState.failureStreak}</td></tr>
-            <tr><td>Status</td><td>${gate.ok ? badge({ label: "ok", tone: "success" }) : badge({ label: gate.reason, tone: "warning" })}</td></tr>
+            <tr>
+              <td>Mode</td>
+              <td>${badge({ label: entry.mode, tone: modeBadgeTone(entry.mode) })}</td>
+            </tr>
+            <tr>
+              <td>Cadence</td>
+              <td>${repo.director.cadence_hours}h</td>
+            </tr>
+            <tr>
+              <td>Daily cap</td>
+              <td>
+                $${budgetState.dailyCapUsd.toFixed(2)} (spent
+                $${budgetState.spentTodayUsd.toFixed(2)})
+              </td>
+            </tr>
+            <tr>
+              <td>Weekly cap</td>
+              <td>
+                $${budgetState.weeklyCapUsd.toFixed(2)} (spent
+                $${budgetState.spentWeekUsd.toFixed(2)})
+              </td>
+            </tr>
+            <tr>
+              <td>Think today</td>
+              <td>
+                $${budgetState.spentTodayThinkUsd.toFixed(4)} /
+                $${repo.director.budget.think_daily_usd.toFixed(2)}
+              </td>
+            </tr>
+            <tr>
+              <td>Failure streak</td>
+              <td>${budgetState.failureStreak}</td>
+            </tr>
+            <tr>
+              <td>Status</td>
+              <td>
+                ${gate.ok
+                  ? badge({ label: "ok", tone: "success" })
+                  : badge({ label: gate.reason, tone: "warning" })}
+              </td>
+            </tr>
           </tbody>
         </table>
       `,
@@ -237,12 +286,10 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       title: `Chat — ${messages.length} message(s)`,
       body:
         messages.length === 0
-          ? html`<p class="text-sm text-[var(--text-2)]">Empty thread. The director will start posting here once it ticks.</p>`
-          : html`
-              <div class="flex flex-col gap-2">
-                ${messages.map(renderMessage)}
-              </div>
-            `,
+          ? html`<p class="text-sm text-[var(--text-2)]">
+              Empty thread. The director will start posting here once it ticks.
+            </p>`
+          : html` <div class="flex flex-col gap-2">${messages.map(renderMessage)}</div> `,
     });
 
     const decisionsCard = card({
@@ -253,7 +300,13 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
           : html`
               <table class="data-table text-sm w-full">
                 <thead>
-                  <tr><th>Time</th><th>Type</th><th>Outcome</th><th>Charter</th><th>Rationale</th></tr>
+                  <tr>
+                    <th>Time</th>
+                    <th>Type</th>
+                    <th>Outcome</th>
+                    <th>Charter</th>
+                    <th>Rationale</th>
+                  </tr>
                 </thead>
                 <tbody>
                   ${decisions.map(
@@ -261,7 +314,17 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
                       <tr>
                         <td>${time(d.ts)}</td>
                         <td><code class="code-inline">${d.decisionType}</code></td>
-                        <td>${badge({ label: d.outcome, tone: d.outcome === "executed" ? "success" : d.outcome === "failed" ? "danger" : "neutral" })}</td>
+                        <td>
+                          ${badge({
+                            label: d.outcome,
+                            tone:
+                              d.outcome === "executed"
+                                ? "success"
+                                : d.outcome === "failed"
+                                  ? "danger"
+                                  : "neutral",
+                          })}
+                        </td>
                         <td>${d.charterVersion ? `v${d.charterVersion}` : "—"}</td>
                         <td>${d.rationale}</td>
                       </tr>
@@ -274,14 +337,8 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
 
     const body = html`
       <div class="grid gap-4 lg:grid-cols-3">
-        <div class="lg:col-span-1 flex flex-col gap-4">
-          ${charterCard}
-          ${budgetCard}
-        </div>
-        <div class="lg:col-span-2 flex flex-col gap-4">
-          ${chatCard}
-          ${decisionsCard}
-        </div>
+        <div class="lg:col-span-1 flex flex-col gap-4">${charterCard} ${budgetCard}</div>
+        <div class="lg:col-span-2 flex flex-col gap-4">${chatCard} ${decisionsCard}</div>
       </div>
     `;
     return c.html(
@@ -290,7 +347,10 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
         section: "director",
         body,
         isHtmx: isHtmx(c.req.raw.headers),
-        breadcrumb: [{ label: "Director", href: "/admin/director" }, { label: `${entry.owner}/${entry.name}` }],
+        breadcrumb: [
+          { label: "Director", href: "/admin/director" },
+          { label: `${entry.owner}/${entry.name}` },
+        ],
       }),
     );
   });

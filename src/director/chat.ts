@@ -6,12 +6,7 @@
 // bridge are both pure consumers of this table.
 
 import type { Db } from "../storage/db.js";
-import type {
-  DirectorMessage,
-  MessageRole,
-  MessageType,
-  NewDirectorMessage,
-} from "./types.js";
+import type { DirectorMessage, MessageRole, MessageType, NewDirectorMessage } from "./types.js";
 
 type MessageRow = {
   id: number;
@@ -71,11 +66,7 @@ export function recentMessages(db: Db, repoId: number, limit = 50): DirectorMess
   return rows.map(rowToMessage).reverse();
 }
 
-export function messagesSince(
-  db: Db,
-  repoId: number,
-  sinceMessageId: number,
-): DirectorMessage[] {
+export function messagesSince(db: Db, repoId: number, sinceMessageId: number): DirectorMessage[] {
   const rows = db
     .prepare(
       `SELECT id, repo_id, ts, role, type, body, metadata, parent_id, decision_id

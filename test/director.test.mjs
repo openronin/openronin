@@ -275,9 +275,9 @@ test("budget gate: think and project spend caps", () => {
     assert.match(gate1.reason, /think budget/);
 
     // Reset by pretending day rolled over (manual hack: zero the column)
-    db.prepare(
-      `UPDATE director_budget_state SET spent_today_think_usd = 0 WHERE repo_id = ?`,
-    ).run(repoId);
+    db.prepare(`UPDATE director_budget_state SET spent_today_think_usd = 0 WHERE repo_id = ?`).run(
+      repoId,
+    );
     recordProjectSpend(db, repoId, 5.0); // exceeds initial_daily
     state = ensureBudgetState(db, repoId, cfg);
     const gate2 = checkBudgetGate(state, cfg);

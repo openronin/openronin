@@ -15,12 +15,7 @@ import type { RepoConfig, RuntimeConfig } from "../config/schema.js";
 import { repoKey } from "../config/schema.js";
 import { initDb, type Db } from "../storage/db.js";
 import { syncReposFromConfig } from "../storage/repos.js";
-import {
-  ensureBudgetState,
-  rolloverDayIfNeeded,
-  markTick,
-  checkBudgetGate,
-} from "./budget.js";
+import { ensureBudgetState, rolloverDayIfNeeded, markTick, checkBudgetGate } from "./budget.js";
 import { appendMessage } from "./chat.js";
 import { captureCharterVersion } from "./charter.js";
 import { recordDecision } from "./decisions.js";

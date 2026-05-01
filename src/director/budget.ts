@@ -46,11 +46,7 @@ function rowToState(row: BudgetRow): BudgetState {
   };
 }
 
-export function ensureBudgetState(
-  db: Db,
-  repoId: number,
-  cfg: BudgetConfig,
-): BudgetState {
+export function ensureBudgetState(db: Db, repoId: number, cfg: BudgetConfig): BudgetState {
   const existing = db
     .prepare(`SELECT * FROM director_budget_state WHERE repo_id = ?`)
     .get(repoId) as BudgetRow | undefined;
@@ -61,9 +57,7 @@ export function ensureBudgetState(
      VALUES (?, ?, ?)`,
   ).run(repoId, cfg.initial_daily_usd, cfg.initial_weekly_usd);
   return rowToState(
-    db
-      .prepare(`SELECT * FROM director_budget_state WHERE repo_id = ?`)
-      .get(repoId) as BudgetRow,
+    db.prepare(`SELECT * FROM director_budget_state WHERE repo_id = ?`).get(repoId) as BudgetRow,
   );
 }
 
@@ -150,14 +144,9 @@ export function markTick(db: Db, repoId: number): void {
 }
 
 // "Should we tick this repo right now?" — pure check, no side effect.
-export type GateResult =
-  | { ok: true }
-  | { ok: false; reason: string };
+export type GateResult = { ok: true } | { ok: false; reason: string };
 
-export function checkBudgetGate(
-  state: BudgetState,
-  cfg: BudgetConfig,
-): GateResult {
+export function checkBudgetGate(state: BudgetState, cfg: BudgetConfig): GateResult {
   if (state.paused) {
     return { ok: false, reason: `paused: ${state.pauseReason ?? "manual"}` };
   }

@@ -32,11 +32,7 @@ export function parseCharter(input: unknown): Charter | null {
 
 // Snapshot the current charter into the versioned table if it's changed
 // since last seen. Returns the version number to stamp on decisions.
-export function captureCharterVersion(
-  db: Db,
-  repoId: number,
-  charter: Charter,
-): number {
+export function captureCharterVersion(db: Db, repoId: number, charter: Charter): number {
   const yaml = YAML.stringify({ charter });
   const latest = db
     .prepare(
@@ -54,11 +50,7 @@ export function captureCharterVersion(
   return nextVersion;
 }
 
-export function getCharterVersion(
-  db: Db,
-  repoId: number,
-  version: number,
-): CharterVersion | null {
+export function getCharterVersion(db: Db, repoId: number, version: number): CharterVersion | null {
   const row = db
     .prepare(
       `SELECT repo_id, version, charter_yaml, effective_from

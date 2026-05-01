@@ -210,12 +210,7 @@ export type NewDecision = {
 };
 
 // ── Tick result ──────────────────────────────────────────────────────────
-export type TickReason =
-  | "scheduled"
-  | "manual"
-  | "user_message"
-  | "pr_event"
-  | "issue_event";
+export type TickReason = "scheduled" | "manual" | "user_message" | "pr_event" | "issue_event";
 
 export type TickContext = {
   reason: TickReason;
