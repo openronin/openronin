@@ -119,8 +119,20 @@ export function captureStateSnapshot(
          WHERE t.repo_id = ?
          ORDER BY r.id DESC LIMIT 15`,
       )
-      .all(repoId) as { ts: string; lane: string; engine: string; status: string; cost_usd: number }[]
-  ).map((r) => ({ ts: r.ts, lane: r.lane, engine: r.engine, status: r.status, costUsd: r.cost_usd }));
+      .all(repoId) as {
+      ts: string;
+      lane: string;
+      engine: string;
+      status: string;
+      cost_usd: number;
+    }[]
+  ).map((r) => ({
+    ts: r.ts,
+    lane: r.lane,
+    engine: r.engine,
+    status: r.status,
+    costUsd: r.cost_usd,
+  }));
 
   const recentMerges = (
     db
@@ -132,16 +144,14 @@ export function captureStateSnapshot(
       .all(repoId) as { ts: string; sha: string; status: string }[]
   ).map((d) => ({ ts: d.ts, sha: d.sha.slice(0, 7), status: d.status }));
 
-  const openPrs = (
-    db
-      .prepare(
-        `SELECT pb.pr_number AS prNumber, pb.status, pb.iterations, pb.branch, pb.updated_at AS updatedAt
+  const openPrs = db
+    .prepare(
+      `SELECT pb.pr_number AS prNumber, pb.status, pb.iterations, pb.branch, pb.updated_at AS updatedAt
          FROM pr_branches pb JOIN tasks t ON t.id = pb.task_id
          WHERE t.repo_id = ? AND pb.status IN ('created','open')
          ORDER BY pb.updated_at DESC NULLS LAST LIMIT 10`,
-      )
-      .all(repoId) as PrSummary[]
-  );
+    )
+    .all(repoId) as PrSummary[];
 
   const recentChat = (
     db

@@ -205,7 +205,8 @@ function recordTickDecisions(
     const slice = each + remainder;
     remainder = 0; // only first row gets the leftover
     ids.push(
-      recordDirectorDecision(db, args.repoId, args.charterVersion, args.mode, d, args.tick, slice).id,
+      recordDirectorDecision(db, args.repoId, args.charterVersion, args.mode, d, args.tick, slice)
+        .id,
     );
   }
   return ids;

@@ -104,7 +104,9 @@ test("decision-schema: TickOutput parses a well-formed payload", () => {
   const out = parseTickOutput({
     observations: "Project is in foundation phase. Director just landed.",
     reasoning: "Nothing material to do this tick. The reliability priority is well-served already.",
-    decisions: [{ type: "no_op", rationale: "Foundation is fresh; let humans drive a few cycles." }],
+    decisions: [
+      { type: "no_op", rationale: "Foundation is fresh; let humans drive a few cycles." },
+    ],
   });
   assert.equal(out.ok, true);
   if (out.ok) {

@@ -144,9 +144,7 @@ export const TickOutputSchema = z.object({
   reasoning: z
     .string()
     .min(20)
-    .describe(
-      "Why these decisions, citing which charter priorities they serve. 1-2 paragraphs.",
-    ),
+    .describe("Why these decisions, citing which charter priorities they serve. 1-2 paragraphs."),
   decisions: z
     .array(DecisionSchema)
     .min(1)
