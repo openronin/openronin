@@ -41,14 +41,14 @@
     "bench:supervisor": "pnpm run build && node dist/bench/supervisor-bench.js"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.7",
-    "@octokit/plugin-retry": "^7.1.2",
-    "@octokit/plugin-throttling": "^9.3.2",
-    "@octokit/rest": "^21.0.2",
-    "better-sqlite3": "^11.5.0",
-    "hono": "^4.6.10",
-    "yaml": "^2.6.1",
-    "zod": "^3.23.8"
+    "@hono/node-server": "^2.0.1",
+    "@octokit/plugin-retry": "^8.1.0",
+    "@octokit/plugin-throttling": "^11.0.3",
+    "@octokit/rest": "^22.0.1",
+    "better-sqlite3": "^12.9.0",
+    "hono": "^4.12.16",
+    "yaml": "^2.8.4",
+    "zod": "^4.4.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
