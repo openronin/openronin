@@ -89,7 +89,7 @@ export function followupsForDecision(db: Db, decisionId: number): FollowupRow[] 
 
 export function latestFollowup(db: Db, decisionId: number): FollowupRow | null {
   const rows = followupsForDecision(db, decisionId);
-  return rows.length > 0 ? rows[0] : null;
+  return rows.length > 0 ? (rows[0] ?? null) : null;
 }
 
 // Pick decisions that are due for a fresh observation. Criteria:
