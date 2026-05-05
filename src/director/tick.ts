@@ -36,6 +36,7 @@ import {
 import { recordDecision } from "./decisions.js";
 import { captureStateSnapshot } from "./state.js";
 import { composePrompt } from "./prompt.js";
+import { recalibrateBudget, shouldRecalibrateToday } from "./retrospective.js";
 import { parseTickOutput, type ParsedDecision, type TickOutput } from "./decision-schema.js";
 import { executeDecision } from "./executor.js";
 import { GithubVcsProvider } from "../providers/github.js";
@@ -75,6 +76,34 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
   }
 
   rolloverDayIfNeeded(db, repoId);
+  ensureBudgetState(db, repoId, director.budget);
+
+  // Once per UTC day, recalibrate the budget caps based on recent outcomes.
+  // This runs BEFORE the gate check below so a freshly-shrunk cap can
+  // immediately throttle the day.
+  if (shouldRecalibrateToday(db, repoId)) {
+    const retro = recalibrateBudget(db, repoId, director.budget);
+    if (retro) {
+      appendMessage(db, {
+        repoId,
+        role: "system",
+        type: "tick_log",
+        body:
+          `budget recalibrated: daily $${retro.oldDaily.toFixed(2)} → $${retro.newDaily.toFixed(2)}, ` +
+          `weekly $${retro.oldWeekly.toFixed(2)} → $${retro.newWeekly.toFixed(2)} (${retro.reason})`,
+        metadata: {
+          repo: repoKey(repo),
+          oldDaily: retro.oldDaily,
+          newDaily: retro.newDaily,
+          oldWeekly: retro.oldWeekly,
+          newWeekly: retro.newWeekly,
+          successRate: retro.sample.successRate,
+          sampleSize: retro.sample.executed + retro.sample.failed + retro.sample.rejected,
+        },
+      });
+    }
+  }
+
   const budget = ensureBudgetState(db, repoId, director.budget);
   const gate = checkBudgetGate(budget, director.budget);
   if (!gate.ok) {

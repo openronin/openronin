@@ -293,4 +293,30 @@ function applyMigrations(db: Db): void {
       "INSERT INTO schema_version (version, applied_at) VALUES (12, datetime('now'))",
     ).run();
   }
+
+  // v13 — Director adaptive-budget retrospective. Each adjustment to a
+  // repo's daily/weekly cap is logged here so the operator sees the
+  // trajectory in the admin UI and the LLM can read it back as part of
+  // state on subsequent ticks.
+  if (current < 13) {
+    db.exec(`
+      CREATE TABLE director_budget_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+        ts TEXT NOT NULL DEFAULT (datetime('now')),
+        old_daily_cap REAL NOT NULL,
+        new_daily_cap REAL NOT NULL,
+        old_weekly_cap REAL NOT NULL,
+        new_weekly_cap REAL NOT NULL,
+        success_rate REAL,
+        sample_size INTEGER,
+        reason TEXT NOT NULL
+      );
+      CREATE INDEX idx_director_budget_history_repo_ts
+        ON director_budget_history(repo_id, ts DESC);
+    `);
+    db.prepare(
+      "INSERT INTO schema_version (version, applied_at) VALUES (13, datetime('now'))",
+    ).run();
+  }
 }
