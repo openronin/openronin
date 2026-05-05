@@ -496,8 +496,8 @@ test("full_auto: VCS failure → outcome=failed, error message in chat", async (
           type: "create_issue",
           rationale: "needed to address charter goal",
           payload: {
-            title: "x",
-            body: "## p\n\nthing\n\n## d\n- yes",
+            title: "Repro the 503 path",
+            body: "## Problem\n\nrepro\n\n## Acceptance\n- yes",
             labels: [],
             priority: "normal",
           },
