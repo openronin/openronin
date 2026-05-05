@@ -1,6 +1,6 @@
 # Director — autonomous PM layer
 
-> **Status:** foundation only. The service runs, ticks, captures the charter, and writes a no-op message to its chat thread. Real LLM-driven planning lands in PR #22; two-way chat with execution gates in PR #23; Telegram bridge in PR #24; adaptive budget in PR #25.
+> **Status:** complete. Schema v13. Five-PR rollout landed: foundation (#21), LLM-driven dry_run tick with auto-engine selection (#24, #25), execution backend (#28), two-way admin chat with HTMX approve/reject + Telegram bridge (#29, #31), adaptive budget retrospective (#32). The director is currently running in `propose` mode on `openronin/openronin` and idle on other watched repos (no charter).
 
 The Director is a separate systemd service (`openronin-director.service`) that runs alongside the main openronin daemon. It shares the same code, database, and `OPENRONIN_DATA_DIR` but plays a different role: where the main daemon **reacts** to events (issue created, PR comment, push), the Director **proactively** decides what the project should work on next.
 
@@ -112,7 +112,7 @@ Each director-enabled repo has one chat thread, stored in `director_messages`. I
 | User      | `veto`                                | cancel a pending decision |
 | System    | `error`                               | "tick threw, paused" |
 
-In phase 1 the chat is **read-only in the admin UI** at `/admin/director/<slug>`. Two-way (HTMX message form, approval buttons) lands in PR #23. Telegram bridge lands in PR #24.
+The chat is two-way at `/admin/director/<slug>` (HTMX form for posting, inline `[✓ Approve]` / `[✗ Reject]` buttons on pending proposals) and via Telegram (`@<your-bot>` polling, see "Telegram bridge" below).
 
 ## Decisions audit trail
 
@@ -142,7 +142,8 @@ So if the service crashes mid-execution, the next tick can pick up exactly where
 
 ### Manual pause for one repo
 
-Currently via direct DB write (admin UI controls land in PR #23):
+From Telegram: `/pause <slug>` (and `/resume <slug>`).
+From admin UI: not yet a button — pause via direct DB write or Telegram.
 
 ```bash
 sqlite3 $OPENRONIN_DATA_DIR/db/openronin.db \
@@ -190,10 +191,52 @@ sudo systemctl enable --now openronin-director.service
 
 Director-specific secrets (e.g. `OPENRONIN_DIRECTOR_TELEGRAM_TOKEN`) go in `$OPENRONIN_DATA_DIR/director.env` — kept separate from the main `secrets.env` so they can be rotated independently. Mode `0600` so only the service user can read.
 
+## Telegram bridge
+
+Configure two env vars in `$OPENRONIN_DATA_DIR/director.env`:
+
+```
+OPENRONIN_DIRECTOR_TELEGRAM_TOKEN=<from @BotFather>
+OPENRONIN_DIRECTOR_TELEGRAM_USER_IDS=12345,67890
+```
+
+The bridge refuses to start if the token is set but the whitelist is empty (otherwise it would accept commands from anyone).
+
+Once running, the bridge does two things:
+
+1. **Outbound mirror.** Every new `director_messages` row with `role='director'` or `'system'` is forwarded to each whitelisted Telegram chat. Pending proposals append a `/approve <id> · /reject <id>` reminder.
+2. **Inbound commands.** Slash commands (whitelist enforced):
+   - `/repos`, `/status`, `/budget`, `/pending`, `/help`
+   - `/approve <id>` / `/reject <id> [reason]` — same code path as the admin UI buttons
+   - `/pause <slug>` / `/resume <slug>`
+   - **plain text** → recorded as a `directive`-typed user message (prefix with `repo:<slug> -- ` to target a specific repo)
+
+## Adaptive budget
+
+The daily/weekly caps in `director_budget_state` aren't static. Once per UTC day, on the first tick of the day, a retrospective looks at the last 14 days of decision outcomes and adjusts:
+
+- **success_rate ≥ 0.80** over ≥5 decisions → climb 10% (capped at `max_daily_usd` / `max_weekly_usd`)
+- **success_rate ≤ 0.40** → shrink 20% (floored at `initial_daily_usd` / `initial_weekly_usd`)
+- otherwise hold steady
+
+`success_rate = executed / (executed + failed + rejected)`. `skipped` is excluded — it's an operator policy choice, not an outcome. Each adjustment is logged to `director_budget_history` with the rationale.
+
+This isn't a "good outcome retrospective" in the strong sense (would need to poll VCS for reverts and CI failures over a 7-day quarantine after each `executed` merge — out of scope). The current model uses immediate decision outcomes as a proxy and is honest about its limits.
+
 ## Roadmap
 
-- **PR #21 — foundation** (this PR). Schema, scaffolding, no-op tick.
-- **PR #22 — dry_run tick.** Real LLM call producing structured decisions; written to chat, never executed.
-- **PR #23 — execution gates + chat UI.** Mode toggle drives whether decisions execute. HTMX approve/reject buttons in admin UI.
-- **PR #24 — Telegram bridge.** Mirror chat to Telegram, accept directives/answers from the phone.
-- **PR #25 — adaptive budget + retrospective.** Budget caps adjust based on outcome quality; 7-day quarantine before counting a merge as "good".
+The five-PR rollout is complete:
+
+- **#21** — foundation (schema, scaffolding, no-op tick)
+- **#24, #25** — LLM-driven dry_run tick + auto-engine selection (Anthropic / MIMO)
+- **#28** — execution backend (mode × authority × decision-type matrix)
+- **#29** — admin UI two-way chat (HTMX approve / reject / message form)
+- **#31** — Telegram bridge
+- **#32** — adaptive budget retrospective
+
+What's reasonable to add next, separately:
+
+- **Outcome retrospective.** Poll VCS post-merge for reverts / CI failures over a 7-day window; weight that into the adaptive budget instead of (or alongside) the immediate decision outcome.
+- **Quality gates.** Per-PR metrics (lint score, coverage delta, bundle size) feeding into approve/merge decisions.
+- **Plugin lanes.** External lane providers via MCP / HTTP so users can add custom decision types without forking.
+- **Multi-tenant.** Several director instances on one host (different bot identities, different repos).
