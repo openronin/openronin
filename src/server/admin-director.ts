@@ -792,9 +792,9 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     const repo = config.repos.find((r) => repoKey(r) === slug);
     if (!repo || !repo.director) return c.notFound();
 
-    db.prepare(
-      `UPDATE director_budget_state SET last_tick_at = NULL WHERE repo_id = ?`,
-    ).run(entry.repoId);
+    db.prepare(`UPDATE director_budget_state SET last_tick_at = NULL WHERE repo_id = ?`).run(
+      entry.repoId,
+    );
 
     appendMessage(db, {
       repoId: entry.repoId,
