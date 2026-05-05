@@ -37,6 +37,7 @@ import { approveDecision, rejectDecision } from "../director/executor.js";
 import { getActiveTick } from "../director/active-tick.js";
 import { getDecisionById } from "../director/decisions.js";
 import { deleteNote, listNotes, recordNote } from "../director/notes.js";
+import { parseSlashCommand, runSlashCommand } from "./slash-commands.js";
 import { GithubVcsProvider } from "../providers/github.js";
 import type { VcsProvider } from "../providers/vcs.js";
 import type { DirectorMessage, MessageType } from "../director/types.js";
@@ -1209,13 +1210,46 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       return c.html("invalid type", 400);
     }
 
-    appendMessage(db, {
-      repoId: entry.repoId,
-      role: "user",
-      type: type as "directive" | "answer" | "veto",
-      body,
-      metadata: { repo: slug, actor: "admin" },
-    });
+    // Detect slash commands BEFORE persisting as a regular user message.
+    // The composer accepts both kinds in the same field — `/tick` is
+    // interpreted as a command, "tick the project pls" is a directive.
+    const cmd = parseSlashCommand(body);
+    if (cmd) {
+      // Echo the command itself into chat so the audit trail records what
+      // the operator typed, then post the system response right after.
+      appendMessage(db, {
+        repoId: entry.repoId,
+        role: "user",
+        type: "directive",
+        body,
+        metadata: { repo: slug, actor: "admin", slash: cmd.name },
+      });
+      const config2 = getConfig();
+      const result = await runSlashCommand({
+        db,
+        repo,
+        repoId: entry.repoId,
+        cmd,
+        dataDir: config2.dataDir,
+      });
+      if (result.echo.length > 0) {
+        appendMessage(db, {
+          repoId: entry.repoId,
+          role: "system",
+          type: "tick_log",
+          body: result.echo,
+          metadata: { repo: slug, kind: "slash_response", slash: cmd.name },
+        });
+      }
+    } else {
+      appendMessage(db, {
+        repoId: entry.repoId,
+        role: "user",
+        type: type as "directive" | "answer" | "veto",
+        body,
+        metadata: { repo: slug, actor: "admin" },
+      });
+    }
 
     const messages = recentMessages(db, entry.repoId, 200);
     return c.html(
