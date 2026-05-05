@@ -152,16 +152,26 @@ function makeStubVcs(itemByNumber) {
       }
       return item;
     },
-    async postComment() { return { id: "0", url: "" }; },
+    async postComment() {
+      return { id: "0", url: "" };
+    },
     async updateComment() {},
     async closeItem() {},
-    async listAllPrFeedback() { return []; },
-    verifyWebhookSignature() { return true; },
-    async createIssue() { return { number: 0, url: "" }; },
+    async listAllPrFeedback() {
+      return [];
+    },
+    verifyWebhookSignature() {
+      return true;
+    },
+    async createIssue() {
+      return { number: 0, url: "" };
+    },
     async addLabels() {},
     async removeLabels() {},
     async approvePullRequest() {},
-    async mergePullRequest() { return { merged: false }; },
+    async mergePullRequest() {
+      return { merged: false };
+    },
   };
 }
 
@@ -194,9 +204,56 @@ test("runOutcomeFollowupSweep: records issue_open / issue_merged_via_pr / issue_
 
     const stub = makeStubVcs(
       new Map([
-        [100, { number: 100, kind: "issue", title: "Open one", body: "", author: "x", authorAssociation: "MEMBER", state: "open", labels: [], createdAt: "2026-05-01T00:00:00Z", updatedAt: "2026-05-05T00:00:00Z", url: "https://example.test/issues/100" }],
-        [200, { number: 200, kind: "issue", title: "Merged one", body: "", author: "x", authorAssociation: "MEMBER", state: "closed", stateReason: "completed", labels: [], createdAt: "2026-05-01T00:00:00Z", updatedAt: "2026-05-05T00:00:00Z", url: "https://example.test/issues/200" }],
-        [300, { number: 300, kind: "issue", title: "Stale one", body: "", author: "x", authorAssociation: "MEMBER", state: "closed", stateReason: "not_planned", labels: [], createdAt: "2026-05-01T00:00:00Z", updatedAt: "2026-05-05T00:00:00Z", url: "https://example.test/issues/300" }],
+        [
+          100,
+          {
+            number: 100,
+            kind: "issue",
+            title: "Open one",
+            body: "",
+            author: "x",
+            authorAssociation: "MEMBER",
+            state: "open",
+            labels: [],
+            createdAt: "2026-05-01T00:00:00Z",
+            updatedAt: "2026-05-05T00:00:00Z",
+            url: "https://example.test/issues/100",
+          },
+        ],
+        [
+          200,
+          {
+            number: 200,
+            kind: "issue",
+            title: "Merged one",
+            body: "",
+            author: "x",
+            authorAssociation: "MEMBER",
+            state: "closed",
+            stateReason: "completed",
+            labels: [],
+            createdAt: "2026-05-01T00:00:00Z",
+            updatedAt: "2026-05-05T00:00:00Z",
+            url: "https://example.test/issues/200",
+          },
+        ],
+        [
+          300,
+          {
+            number: 300,
+            kind: "issue",
+            title: "Stale one",
+            body: "",
+            author: "x",
+            authorAssociation: "MEMBER",
+            state: "closed",
+            stateReason: "not_planned",
+            labels: [],
+            createdAt: "2026-05-01T00:00:00Z",
+            updatedAt: "2026-05-05T00:00:00Z",
+            url: "https://example.test/issues/300",
+          },
+        ],
       ]),
     );
 
@@ -214,11 +271,27 @@ test("runOutcomeFollowupSweep: records issue_open / issue_merged_via_pr / issue_
 
 test("summariseFollowup: human-readable strings include the ref number", () => {
   assert.match(
-    summariseFollowup({ kind: "issue_merged_via_pr", refNumber: 42, observedAt: "", id: 1, decisionId: 1, detail: "", refUrl: null }),
+    summariseFollowup({
+      kind: "issue_merged_via_pr",
+      refNumber: 42,
+      observedAt: "",
+      id: 1,
+      decisionId: 1,
+      detail: "",
+      refUrl: null,
+    }),
     /merged.*#42/,
   );
   assert.match(
-    summariseFollowup({ kind: "issue_open", refNumber: 7, observedAt: "", id: 1, decisionId: 1, detail: "", refUrl: null }),
+    summariseFollowup({
+      kind: "issue_open",
+      refNumber: 7,
+      observedAt: "",
+      id: 1,
+      decisionId: 1,
+      detail: "",
+      refUrl: null,
+    }),
     /still open.*#7/,
   );
 });
