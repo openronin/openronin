@@ -333,13 +333,15 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
 // are engine-specific. MIMO's quality is lower than Sonnet but its JSON-mode
 // is solid and the cost is ~10x cheaper, so it's a fine fallback for a
 // dry_run-mode director that's still being calibrated.
-export function selectThinkEngine(opts: {
-  // When the tick is reactive (user just wrote in chat) we prefer the
-  // cheap engine — chat replies don't need Sonnet's planning depth, and
-  // MIMO's response time is half. Scheduled cadence ticks (full planning
-  // round) still pull the heavy engine.
-  preferCheap?: boolean;
-} = {}): { engine: Engine; model: string } {
+export function selectThinkEngine(
+  opts: {
+    // When the tick is reactive (user just wrote in chat) we prefer the
+    // cheap engine — chat replies don't need Sonnet's planning depth, and
+    // MIMO's response time is half. Scheduled cadence ticks (full planning
+    // round) still pull the heavy engine.
+    preferCheap?: boolean;
+  } = {},
+): { engine: Engine; model: string } {
   const override = (process.env.OPENRONIN_DIRECTOR_THINK_ENGINE ?? "").toLowerCase();
   const userModel = process.env.OPENRONIN_DIRECTOR_THINK_MODEL;
   const haveAnthropic = !!process.env.ANTHROPIC_API_KEY;
