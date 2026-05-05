@@ -22,6 +22,7 @@ export type PromptInputs = {
   repoName: string;
   charterYaml: string;
   mode: string;
+  language: string;
   state: StateSnapshot;
   dataDir: string;
   repoConfig: RepoConfig;
@@ -48,6 +49,7 @@ export function composePrompt(inputs: PromptInputs): ComposedPrompt {
     name: inputs.repoName,
     charter_yaml: inputs.charterYaml.trim(),
     mode: inputs.mode,
+    language: inputs.language,
     state_json: JSON.stringify(inputs.state, null, 2),
     chat_transcript: renderChatTranscript(inputs.state.recentChat),
   });

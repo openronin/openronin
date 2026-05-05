@@ -103,6 +103,15 @@ export const DirectorConfigSchema = z
     mode: DirectorModeSchema.default("dry_run"),
     cadence_hours: z.number().positive().default(6),
     bot_prefix: z.string().default("👔 director:"),
+    // Language the director speaks: applies to chat-thread output
+    // (observations, reasoning, ask_user questions, proposal bodies),
+    // and to issue/PR comments it produces. Independent from the
+    // existing repo-level `language_for_*` settings — a project can be
+    // Russian-speaking with the director communicating in Russian, but
+    // commit messages still in English. Free-form string, fed verbatim
+    // into the prompt; e.g. "Russian", "English", "日本語", "code-mixed
+    // Russian/English (technical terms in English)".
+    language: z.string().default("English"),
     charter: CharterSchema.optional(),
     budget: BudgetConfigSchema,
     authority: DirectorAuthoritySchema,
