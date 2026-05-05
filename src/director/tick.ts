@@ -48,12 +48,21 @@ const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MIMO_MODEL = "mimo-v2.5-pro";
 const TICK_TIMEOUT_MS = 120_000; // 2 min — generous for a 30k-token thinking call
 
+// Why the tick is firing right now. The Director used to wake up only on
+// a 6-hour timer; reactivity (responding to user chat messages, deploys,
+// etc.) introduces other reasons. The reason is surfaced in the tick_log
+// chat message and in the prompt so the LLM can prioritise accordingly.
+export type TickReason = "scheduled" | "manual" | "user_message" | "pr_event" | "deploy_failed";
+
 export type TickRunOptions = {
   db: Db;
   repoId: number;
   repo: RepoConfig;
   director: DirectorConfig;
   dataDir: string;
+  // Why this tick is firing — informs the prompt and the chat message.
+  // Defaults to "scheduled" for backwards compatibility with tests.
+  reason?: TickReason;
   // Engine factory (overridable for tests).
   engineFactory?: () => Engine;
   // VcsProvider factory (overridable for tests). Defaults to GithubVcsProvider
@@ -67,12 +76,14 @@ export type TickRunResult = {
   detail: string;
   decisionsLogged: number;
   costUsd: number;
+  reason: TickReason;
 };
 
 export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
   const { db, repoId, repo, director, dataDir } = opts;
+  const reason: TickReason = opts.reason ?? "scheduled";
   if (!director.charter) {
-    return { status: "skipped", detail: "no charter", decisionsLogged: 0, costUsd: 0 };
+    return { status: "skipped", detail: "no charter", decisionsLogged: 0, costUsd: 0, reason };
   }
 
   rolloverDayIfNeeded(db, repoId);
@@ -119,6 +130,7 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
       detail: gate.reason,
       decisionsLogged: 0,
       costUsd: 0,
+      reason,
     };
   }
 
@@ -134,6 +146,7 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
     // charter loaded via Zod always has persona (PersonaSchema.default({})),
     // but tests pass plain object literals — fall back to schema defaults.
     persona: director.charter.persona ?? PersonaSchema.parse({}),
+    reason,
     state,
     dataDir,
     repoConfig: repo,
@@ -158,7 +171,7 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
     // mark the tick + bump the streak. The streak gate will pause us after N.
     markTick(db, repoId);
     bumpFailureStreak(db, repoId);
-    return { status: "error", detail, decisionsLogged: 0, costUsd: 0 };
+    return { status: "error", detail, decisionsLogged: 0, costUsd: 0, reason };
   }
 
   let llmResult;
@@ -181,7 +194,7 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
     });
     markTick(db, repoId);
     bumpFailureStreak(db, repoId);
-    return { status: "error", detail, decisionsLogged: 0, costUsd: 0 };
+    return { status: "error", detail, decisionsLogged: 0, costUsd: 0, reason };
   }
 
   const cost = llmResult.usage.costUsd ?? 0;
@@ -205,7 +218,13 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
     });
     markTick(db, repoId);
     bumpFailureStreak(db, repoId);
-    return { status: "error", detail: "schema-invalid", decisionsLogged: 0, costUsd: cost };
+    return {
+      status: "error",
+      detail: "schema-invalid",
+      decisionsLogged: 0,
+      costUsd: cost,
+      reason,
+    };
   }
 
   const tick = parsed.value;
@@ -295,6 +314,7 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
     detail: summary,
     decisionsLogged: recorded.length,
     costUsd: cost,
+    reason,
   };
 }
 

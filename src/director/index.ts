@@ -16,11 +16,15 @@ import { repoKey } from "../config/schema.js";
 import { initDb, type Db } from "../storage/db.js";
 import { syncReposFromConfig } from "../storage/repos.js";
 import { ensureBudgetState, rolloverDayIfNeeded } from "./budget.js";
-import { appendMessage } from "./chat.js";
-import { runTick } from "./tick.js";
+import { appendMessage, unansweredUserDirectives } from "./chat.js";
+import { runTick, type TickReason } from "./tick.js";
+import { releaseTick, tryAcquireTick } from "./active-tick.js";
 import type { DirectorConfig } from "./types.js";
 
-const SERVICE_LOOP_INTERVAL_MS = 60_000; // wake up every minute
+// Wake up every 10s — tight enough that a user chat message is reacted to
+// in <30s in the typical case, loose enough that an idle director burns
+// almost no CPU. Cadence-based scheduled ticks (6h+) are cheap to check.
+const SERVICE_LOOP_INTERVAL_MS = 10_000;
 const KILL_SWITCH_ENV = "OPENRONIN_DIRECTOR_DISABLED";
 
 type RepoLookup = {
@@ -54,7 +58,7 @@ function listDirectorEnabledRepos(db: Db, config: RuntimeConfig): RepoLookup[] {
   return out;
 }
 
-function shouldTickNow(state: { lastTickAt: string | null }, cadenceHours: number): boolean {
+function isPastCadence(state: { lastTickAt: string | null }, cadenceHours: number): boolean {
   if (!state.lastTickAt) return true;
   const last = Date.parse(state.lastTickAt + "Z"); // sqlite text is UTC
   if (Number.isNaN(last)) return true;
@@ -62,19 +66,56 @@ function shouldTickNow(state: { lastTickAt: string | null }, cadenceHours: numbe
   return elapsedMs >= cadenceHours * 3600_000;
 }
 
-async function executeTick(db: Db, target: RepoLookup, dataDir: string): Promise<void> {
-  const result = await runTick({
-    db,
-    repoId: target.repoId,
-    repo: target.repo,
-    director: target.director,
-    dataDir,
-  });
-  // eslint-disable-next-line no-console
-  console.log(
-    `[director] tick on ${repoKey(target.repo)}: ${result.status} — ${result.detail} ` +
-      `(${result.decisionsLogged} decisions, $${result.costUsd.toFixed(4)})`,
-  );
+// Why fire a tick right now? Reactive (user wrote in chat) wins over
+// scheduled (cadence elapsed). Returns null if we should stay idle.
+//
+// "Reactive" means: at least one user message exists that the director
+// hasn't responded to yet. The DB helper does the right thing — it only
+// returns user messages with no later director-role message, so once a
+// tick produces a status reply, the queue empties for that user.
+function pickTickReason(
+  db: Db,
+  repoId: number,
+  state: { lastTickAt: string | null },
+  cadenceHours: number,
+): TickReason | null {
+  if (unansweredUserDirectives(db, repoId).length > 0) return "user_message";
+  if (isPastCadence(state, cadenceHours)) return "scheduled";
+  return null;
+}
+
+async function executeTick(
+  db: Db,
+  target: RepoLookup,
+  dataDir: string,
+  reason: TickReason,
+): Promise<void> {
+  // Acquire the per-repo lock. This makes parallel ticks structurally
+  // impossible (a webhook-driven trigger landing during a scheduled tick
+  // would otherwise produce duplicate decisions) and doubles as the
+  // "thinking…" indicator the admin chat polls for.
+  if (!tryAcquireTick(db, target.repoId, reason)) {
+    // Another worker is already ticking this repo. Skip silently — the
+    // running tick will pick up any new chat messages on its next pass.
+    return;
+  }
+  try {
+    const result = await runTick({
+      db,
+      repoId: target.repoId,
+      repo: target.repo,
+      director: target.director,
+      dataDir,
+      reason,
+    });
+    // eslint-disable-next-line no-console
+    console.log(
+      `[director] tick on ${repoKey(target.repo)} (${reason}): ${result.status} — ${result.detail} ` +
+        `(${result.decisionsLogged} decisions, $${result.costUsd.toFixed(4)})`,
+    );
+  } finally {
+    releaseTick(db, target.repoId);
+  }
 }
 
 let stopping = false;
@@ -89,9 +130,10 @@ async function loopOnce(db: Db, config: RuntimeConfig): Promise<void> {
     if (stopping) return;
     rolloverDayIfNeeded(db, t.repoId);
     const state = ensureBudgetState(db, t.repoId, t.director.budget);
-    if (!shouldTickNow(state, t.director.cadence_hours)) continue;
+    const reason = pickTickReason(db, t.repoId, state, t.director.cadence_hours);
+    if (!reason) continue;
     try {
-      await executeTick(db, t, config.dataDir);
+      await executeTick(db, t, config.dataDir, reason);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       try {
