@@ -65,6 +65,9 @@ export class DirectorTelegramBridge {
   private lastMirroredMessageId = 0;
   private readonly chatIds = new Set<number>();
   private stopping = false;
+  // Aborts the in-flight long-poll on stop() so SIGTERM doesn't have to
+  // wait the full 30s POLL_TIMEOUT before the bridge unwinds.
+  private pollAbort: AbortController | null = null;
   private readonly api: string;
 
   constructor(
@@ -96,6 +99,15 @@ export class DirectorTelegramBridge {
 
   stop(): void {
     this.stopping = true;
+    // Abort any in-flight long-poll so the loop unblocks immediately
+    // instead of waiting up to 30s for Telegram to time out the poll.
+    if (this.pollAbort) {
+      try {
+        this.pollAbort.abort();
+      } catch {
+        // best-effort
+      }
+    }
   }
 
   // ── Outbound: poll new director_messages → push to telegram ──────────
@@ -108,7 +120,18 @@ export class DirectorTelegramBridge {
         // eslint-disable-next-line no-console
         console.error("[director-telegram] mirror error:", err);
       }
-      await sleep(MIRROR_INTERVAL_MS);
+      await this.interruptibleSleep(MIRROR_INTERVAL_MS);
+    }
+  }
+
+  // Wakes up early when stop() flips the flag — same pattern as the
+  // service-loop sleep in index.ts.
+  private async interruptibleSleep(ms: number): Promise<void> {
+    let elapsed = 0;
+    while (elapsed < ms && !this.stopping) {
+      const slice = Math.min(250, ms - elapsed);
+      await sleep(slice);
+      elapsed += slice;
     }
   }
 
@@ -156,18 +179,32 @@ export class DirectorTelegramBridge {
       try {
         await this.pollOnce();
       } catch (err) {
+        // AbortError from stop() is expected — exit cleanly without logging
+        // a scary stack trace.
+        if (this.stopping) return;
         // eslint-disable-next-line no-console
         console.error("[director-telegram] poll error:", err);
-        await sleep(5_000);
+        await this.interruptibleSleep(5_000);
       }
     }
   }
 
   private async pollOnce(): Promise<void> {
     const url = `${this.api}/getUpdates?offset=${this.offset}&timeout=${POLL_TIMEOUT_S}&allowed_updates=%5B%22message%22%5D`;
-    const resp = await fetch(url, {
-      signal: AbortSignal.timeout((POLL_TIMEOUT_S + 10) * 1000),
-    });
+    // Compose AbortSignals: timeout (so we don't hang forever on bad
+    // network) AND the bridge's own controller (so stop() can interrupt
+    // mid-poll). Whichever fires first aborts the fetch.
+    this.pollAbort = new AbortController();
+    const timeoutSignal = AbortSignal.timeout((POLL_TIMEOUT_S + 10) * 1000);
+    const signal = AbortSignal.any
+      ? AbortSignal.any([timeoutSignal, this.pollAbort.signal])
+      : this.pollAbort.signal;
+    let resp;
+    try {
+      resp = await fetch(url, { signal });
+    } finally {
+      this.pollAbort = null;
+    }
     if (!resp.ok) {
       throw new Error(`getUpdates ${resp.status}`);
     }
