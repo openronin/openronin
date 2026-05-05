@@ -236,11 +236,23 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
 
   // 1. Persist all decisions first with outcome=pending so the audit trail
   //    is complete even if execution crashes. Cost is split across rows.
+  //    The full prompt + LLM response are stamped on every row so the
+  //    /admin/director/<slug>/decisions/<id> trace page can show what
+  //    produced this decision without a separate table.
   const recorded = recordTickDecisions(db, {
     repoId,
     tick,
     charterVersion,
     cost,
+    trace: {
+      promptText: `# system\n\n${prompt.systemPrompt}\n\n# user\n\n${prompt.userPrompt}`,
+      responseText: llmResult.content,
+      tokensIn: llmResult.usage.tokensIn,
+      tokensOut: llmResult.usage.tokensOut,
+      durationMs: llmResult.durationMs,
+      engineId: engine.id,
+      model,
+    },
   });
 
   // 2. Post the LLM's observations + reasoning + decision summary to chat
@@ -404,6 +416,17 @@ function recordTickDecisions(
     tick: TickOutput;
     charterVersion: number;
     cost: number;
+    // Trace fields shared across all decisions from this tick — they all
+    // came from the same LLM call so the prompt/response is identical.
+    trace: {
+      promptText: string;
+      responseText: string;
+      tokensIn: number;
+      tokensOut: number;
+      durationMs: number;
+      engineId: string;
+      model: string;
+    };
   },
 ): RecordedDecision[] {
   const out: RecordedDecision[] = [];
@@ -438,6 +461,14 @@ function recordTickDecisions(
       // outcome (executed / pending-with-proposal / dry_run / failed / skipped).
       outcome: "pending",
       costUsd: slice,
+      // All decisions in a single tick share the same LLM call/prompt.
+      promptText: args.trace.promptText,
+      responseText: args.trace.responseText,
+      tokensIn: args.trace.tokensIn,
+      tokensOut: args.trace.tokensOut,
+      durationMs: args.trace.durationMs,
+      engineId: args.trace.engineId,
+      model: args.trace.model,
     });
     if (dup.duplicateOf !== null) {
       // Mark the just-inserted row as a skipped duplicate. We still keep
