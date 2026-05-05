@@ -412,6 +412,32 @@ function applyMigrationsInner(db: Db): void {
     ).run();
   }
 
+  // v19 — Outcome follow-up. After a director-emitted create_issue
+  // (etc.) lands as `executed`, we want to look at the resulting issue/PR
+  // a day, three days, a week later: did it get closed without resolution?
+  // Was a PR merged for it? Was that PR reverted? Each observation is
+  // appended as a row here (multiple rows per decision is normal — one
+  // per sweep). Feeds the per-decision trace UI; doesn't yet change the
+  // adaptive-budget retrospective (that uses immediate decision outcomes).
+  if (current < 19) {
+    db.exec(`
+      CREATE TABLE director_outcome_followups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        decision_id INTEGER NOT NULL REFERENCES director_decisions(id) ON DELETE CASCADE,
+        observed_at TEXT NOT NULL DEFAULT (datetime('now')),
+        kind TEXT NOT NULL,
+        detail TEXT,
+        ref_number INTEGER,
+        ref_url TEXT
+      );
+      CREATE INDEX idx_director_outcome_followups_decision
+        ON director_outcome_followups(decision_id, observed_at DESC);
+    `);
+    db.prepare(
+      "INSERT INTO schema_version (version, applied_at) VALUES (19, datetime('now'))",
+    ).run();
+  }
+
   // v18 — Per-decision LLM trace. Adds prompt_text + response_text + a
   // pair of token/duration columns directly on director_decisions so the
   // /admin/director/<slug>/decisions/<id> page can show the full prompt

@@ -608,6 +608,7 @@ function mapReviewState(state: string | null | undefined): ReviewComment["review
 }
 
 function mapIssue(raw: RawIssue): VcsItem {
+  const stateReasonRaw = (raw as { state_reason?: string | null }).state_reason;
   return {
     number: raw.number,
     kind: raw.pull_request ? "pull_request" : "issue",
@@ -616,6 +617,7 @@ function mapIssue(raw: RawIssue): VcsItem {
     author: raw.user?.login ?? "unknown",
     authorAssociation: raw.author_association ?? "NONE",
     state: raw.state === "open" ? "open" : "closed",
+    stateReason: stateReasonRaw ?? undefined,
     labels: raw.labels.map((l) => (typeof l === "string" ? l : (l.name ?? ""))).filter(Boolean),
     createdAt: raw.created_at,
     updatedAt: raw.updated_at,
