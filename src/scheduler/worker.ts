@@ -185,10 +185,33 @@ export async function processOne(
         detail: `rate-limit (cooldown ${Math.round(delayMs / 60000)}m)`,
       };
     }
+    // VCS 404 means the issue/PR doesn't exist on the current owner —
+    // typically left over from a repo rename / fork. Re-trying forever
+    // just produces journal noise (we hit prod with this on tasks #114
+    // and #115 after the openronin/openronin rename). Mark the task
+    // permanently errored so the scheduler stops polling it; an operator
+    // can re-enqueue manually if they really want to retry.
+    if (isVcs404(error)) {
+      const detail = `VCS returned 404 — issue/PR ${task.external_id} no longer exists`;
+      markError(db, task.id, detail, 365 * 24 * 60 * 60 * 1000); // ≈ never retry
+      return { taskId: task.id, status: "error", detail: "vcs-404" };
+    }
     const message = error instanceof Error ? error.message : String(error);
     markError(db, task.id, message);
     return { taskId: task.id, status: "error", detail: message.slice(0, 120) };
   }
+}
+
+// Octokit attaches `status: 404` on 404 responses; some clients only
+// surface it as a `\b404\b` substring in the message. Match either.
+function isVcs404(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const e = error as { status?: number; message?: string };
+  if (e.status === 404) return true;
+  if (typeof e.message === "string" && /\b404\b.*Not Found|Not Found.*\b404\b/i.test(e.message)) {
+    return true;
+  }
+  return false;
 }
 
 export async function drain(db: Db, config: RuntimeConfig, limit: number): Promise<WorkResult[]> {
