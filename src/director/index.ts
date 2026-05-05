@@ -275,7 +275,10 @@ export async function runDirectorService(): Promise<void> {
   const db = initDb(config.dataDir);
   syncReposFromConfig(db, config.repos);
 
-  watchConfig(config.dataDir, () => {
+  // Keep a handle so we can stop the file watcher on shutdown — otherwise
+  // the fs.watch keepalive prevents Node from exiting after the main loop
+  // returns.
+  const stopWatchConfig = watchConfig(config.dataDir, () => {
     try {
       config = loadConfig({ dataDir: config.dataDir });
       syncReposFromConfig(db, config.repos);
@@ -323,7 +326,21 @@ export async function runDirectorService(): Promise<void> {
     await sleep(SERVICE_LOOP_INTERVAL_MS);
   }
 
+  // Tear down the I/O handles that keep the event loop alive otherwise.
+  // Without these, the process would log "stopped cleanly" but linger
+  // until systemd's TimeoutStopSec fires SIGKILL — the original 120s
+  // production hang we're fixing.
+  try {
+    stopWatchConfig();
+  } catch {
+    // best-effort; we're shutting down anyway
+  }
+  db.close();
   // eslint-disable-next-line no-console
   console.log("[director] stopped cleanly.");
-  db.close();
+  // Belt-and-braces: even after closing watchers and the DB, a stuck
+  // AbortSignal.timeout() inside an aborted Telegram fetch can still hold
+  // a timer ref in older Node builds. Force-exit so the deploy never has
+  // to wait for systemd's SIGKILL.
+  process.exit(0);
 }
