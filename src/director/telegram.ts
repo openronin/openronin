@@ -427,6 +427,8 @@ export class DirectorTelegramBridge {
     }
     const id = this.repoIdFor(repo);
     if (id == null) return;
+    // ensureBudgetState first so the UPDATE in pause/unpause has a row to hit.
+    ensureBudgetState(this.db, id, repo.director!.budget);
     if (pauseFlag) {
       pauseRepo(this.db, id, `manual pause via telegram by ${msg.from?.id}`);
       await this.sendMessage(msg.chat.id, `⏸ paused ${slug}`);
