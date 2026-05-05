@@ -20,9 +20,15 @@ ExecStart=/usr/bin/node /opt/openronin/dist/index.js director:run
 # self-deploy. The director is a simple loop with no children right now,
 # but matching behaviour keeps deploys uniform.
 KillMode=process
-TimeoutStopSec=120
+# Director loop uses interruptible sleeps (250ms slices) and aborts the
+# Telegram long-poll on SIGTERM, so a clean shutdown finishes in seconds.
+# A mid-flight LLM call can still take up to its own 120s timeout though,
+# so leave generous headroom — 30s lets a tick wrap without forcing a
+# SIGKILL on every deploy. Earlier 120s setting masked a real bug where
+# the Telegram long-poll wasn't cancellable.
+TimeoutStopSec=30
 Restart=on-failure
-RestartSec=10s
+RestartSec=5s
 # Modest cap so runaway prompts can't OOM the host.
 MemoryMax=512M
 StandardOutput=journal

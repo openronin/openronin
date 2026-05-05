@@ -124,8 +124,26 @@ async function executeTick(
 
 let stopping = false;
 
+// Interruptible sleep — SIGTERM-aware. The naive `setTimeout` blocks the
+// service loop for the full 10s even after `stopping = true`, which on
+// every deploy added up to ~10s of "service refusing to die" before
+// systemd's 120s timeout eventually SIGKILLs us. Splitting the wait into
+// 250ms slices shrinks worst-case shutdown lag to a quarter-second.
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  if (ms <= 250) return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    let elapsed = 0;
+    const tick = (): void => {
+      if (stopping || elapsed >= ms) {
+        resolve();
+        return;
+      }
+      const slice = Math.min(250, ms - elapsed);
+      elapsed += slice;
+      setTimeout(tick, slice);
+    };
+    tick();
+  });
 }
 
 async function maybeRunDigest(db: Db, target: RepoLookup, dataDir: string): Promise<void> {
