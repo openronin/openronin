@@ -362,9 +362,7 @@ function applyMigrations(db: Db): void {
   // ISO date (YYYY-MM-DD) in the configured digest timezone — the
   // service-loop predicate compares strings, no time math.
   if (current < 16) {
-    db.exec(
-      `ALTER TABLE director_budget_state ADD COLUMN last_digest_date TEXT`,
-    );
+    db.exec(`ALTER TABLE director_budget_state ADD COLUMN last_digest_date TEXT`);
     db.prepare(
       "INSERT INTO schema_version (version, applied_at) VALUES (16, datetime('now'))",
     ).run();
