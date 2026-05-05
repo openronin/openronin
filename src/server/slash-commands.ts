@@ -45,7 +45,7 @@ export function parseSlashCommand(body: string): SlashCommand | null {
   const trimmed = body.trim();
   if (!trimmed.startsWith("/")) return null;
   const m = trimmed.match(/^\/([a-z_]+)(\s+(.*))?$/iu);
-  if (!m) return null;
+  if (!m || !m[1]) return null;
   const name = m[1].toLowerCase();
   if (!(KNOWN as readonly string[]).includes(name)) return null;
   return { name, args: (m[3] ?? "").trim() } as SlashCommand;
