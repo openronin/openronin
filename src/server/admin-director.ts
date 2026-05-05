@@ -21,7 +21,7 @@ import { Hono } from "hono";
 import type { Db } from "../storage/db.js";
 import type { RuntimeConfig } from "../config/schema.js";
 import { repoKey, type RepoConfig } from "../config/schema.js";
-import { html, isHtmx, page, raw, t as time, type TrustedHtml } from "./layout.js";
+import { html, isHtmx, page, t as time, type TrustedHtml } from "./layout.js";
 import { card } from "./components/card.js";
 import { badge, type BadgeTone } from "./components/badge.js";
 import { appendMessage, recentMessages } from "../director/chat.js";
@@ -488,9 +488,9 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     const form = await c.req.parseBody();
     const type = String(form.type ?? "directive");
     const body = String(form.body ?? "").trim();
-    if (!body) return c.html(raw("body required"), 400);
+    if (!body) return c.html("body required", 400);
     if (!["directive", "answer", "veto"].includes(type)) {
-      return c.html(raw("invalid type"), 400);
+      return c.html("invalid type", 400);
     }
 
     appendMessage(db, {
@@ -502,7 +502,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     });
 
     const messages = recentMessages(db, entry.repoId, 100);
-    return c.html(renderChatThread(db, slug, messages));
+    return c.html(renderChatThread(db, slug, messages).value);
   });
 
   // ── POST /:slug/decisions/:id/approve — execute a pending decision ────
@@ -527,7 +527,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     });
 
     const messages = recentMessages(db, entry.repoId, 100);
-    return c.html(renderChatThread(db, slug, messages));
+    return c.html(renderChatThread(db, slug, messages).value);
   });
 
   // ── POST /:slug/decisions/:id/reject — record reject + reason ─────────
@@ -554,7 +554,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     });
 
     const messages = recentMessages(db, entry.repoId, 100);
-    return c.html(renderChatThread(db, slug, messages));
+    return c.html(renderChatThread(db, slug, messages).value);
   });
 
   return app;
