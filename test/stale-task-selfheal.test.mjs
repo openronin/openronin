@@ -19,6 +19,10 @@ function getTaskRow(db, id) {
   return db.prepare("SELECT id, status, next_due_at FROM tasks WHERE id = ?").get(id);
 }
 
+// GithubVcsProvider construction throws without GITHUB_TOKEN — set a
+// dummy value so we can monkey-patch the prototype's getItem.
+process.env.GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? "test-dummy-token";
+
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), "openronin-stale-test-"));
   const db = initDb(dir);
@@ -132,8 +136,9 @@ test("worker: 404 from VCS parks the task with a year-long retry delay", async (
 
       const after = getTaskRow(db, taskId);
       // markError sets status=pending with next_due_at far in the future
-      // — a year out for our 404 case.
-      const nextMs = new Date(after.next_due_at + "Z").getTime();
+      // — a year out for our 404 case. The stored value is already ISO
+      // with a trailing Z, so feed it straight to Date.
+      const nextMs = new Date(after.next_due_at).getTime();
       assert.ok(
         nextMs > Date.now() + 364 * 24 * 60 * 60 * 1000,
         `expected next_due_at >= 364d out, got ${after.next_due_at}`,
@@ -179,8 +184,8 @@ test("worker: non-404 errors keep their normal short retry", async () => {
       assert.notEqual(result.detail, "vcs-404");
 
       const after = getTaskRow(db, taskId);
-      // Default error retry — within hours, NOT a year out.
-      const nextMs = new Date(after.next_due_at + "Z").getTime();
+      // Default error retry — within hours, NOT a year out. ISO with Z.
+      const nextMs = new Date(after.next_due_at).getTime();
       assert.ok(
         nextMs < Date.now() + 24 * 60 * 60 * 1000,
         `expected next_due_at within 24h, got ${after.next_due_at}`,
