@@ -28,9 +28,10 @@ import { repoKey, type RepoConfig } from "../config/schema.js";
 import { html, isHtmx, page, raw, t as time, type TrustedHtml } from "./layout.js";
 import { card } from "./components/card.js";
 import { badge, type BadgeTone } from "./components/badge.js";
-import { appendMessage, recentMessages } from "../director/chat.js";
+import { appendMessage, recentMessages, unansweredUserDirectives } from "../director/chat.js";
 import { recentDecisions } from "../director/decisions.js";
 import { ensureBudgetState, checkBudgetGate } from "../director/budget.js";
+import type { BudgetState } from "../director/types.js";
 import { latestCharterVersion } from "../director/charter.js";
 import { approveDecision, rejectDecision } from "../director/executor.js";
 import { GithubVcsProvider } from "../providers/github.js";
@@ -231,6 +232,104 @@ function renderProposalActions(slug: string, decisionId: number): TrustedHtml {
         placeholder="reject reason (optional)"
         class="form-input form-input-sm flex-1 min-w-[14rem] text-xs"
       />
+    </div>
+  `;
+}
+
+// ── Tick status panel ────────────────────────────────────────────────
+// Shows when the next scheduled tick will fire, how many user messages
+// are still unanswered, and a [Tick now] button. Auto-refreshes every 10s
+// so the user sees state changes (Director is running → result posted)
+// without manually reloading.
+
+function relativeTime(ts: string | null): string {
+  if (!ts) return "never";
+  // SQLite text is UTC; append Z so Date.parse treats it as UTC.
+  const t = Date.parse(ts.includes("T") ? ts : ts.replace(" ", "T") + "Z");
+  if (Number.isNaN(t)) return ts;
+  const deltaMs = Date.now() - t;
+  const sec = Math.round(deltaMs / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `${hr}h ${min % 60}m ago`;
+  const d = Math.round(hr / 24);
+  return `${d}d ago`;
+}
+
+function untilTime(ts: string | null, cadenceHours: number): string {
+  if (!ts) return "any moment now";
+  const t = Date.parse(ts.includes("T") ? ts : ts.replace(" ", "T") + "Z");
+  if (Number.isNaN(t)) return "?";
+  const nextT = t + cadenceHours * 3600_000;
+  const deltaMs = nextT - Date.now();
+  if (deltaMs <= 0) return "any moment now (loop polls every 60s)";
+  const sec = Math.round(deltaMs / 1000);
+  if (sec < 60) return `in ${sec}s`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `in ${min}m`;
+  const hr = Math.floor(min / 60);
+  return `in ${hr}h ${min % 60}m`;
+}
+
+function renderStatusPanel(
+  db: Db,
+  slug: string,
+  repoId: number,
+  budget: BudgetState,
+  cadenceHours: number,
+): TrustedHtml {
+  const unanswered = unansweredUserDirectives(db, repoId);
+  const isProcessing = budget.lastTickAt === null;
+
+  // Visual state.
+  const stateLabel = isProcessing
+    ? "🟡 Director is processing…"
+    : budget.paused
+      ? "⏸ Paused"
+      : "🟢 Idle";
+  const stateColor = isProcessing
+    ? "border-[var(--warning)] bg-[var(--warning-soft)]"
+    : budget.paused
+      ? "border-[var(--border)] bg-[var(--surface-sunken)]"
+      : "border-[var(--success)] bg-[var(--success-soft)]";
+
+  return html`
+    <div
+      id="director-status"
+      hx-get="/admin/director/${slug}/status"
+      hx-trigger="every 10s"
+      hx-swap="outerHTML"
+      class="rounded-lg border ${stateColor} p-3 text-sm flex flex-wrap items-center gap-x-4 gap-y-2"
+    >
+      <span class="font-medium">${stateLabel}</span>
+      <span class="text-xs text-[var(--fg-muted)]">
+        Last tick: ${relativeTime(budget.lastTickAt)}
+        ${budget.lastTickAt
+          ? ` · Next scheduled: ${untilTime(budget.lastTickAt, cadenceHours)}`
+          : ""}
+      </span>
+      ${unanswered.length > 0
+        ? html`<span class="text-xs">
+            ${badge({
+              label: `${unanswered.length} unanswered`,
+              tone: "warning",
+            })}
+          </span>`
+        : ""}
+      <span class="ml-auto flex items-center gap-2">
+        <button
+          class="btn btn-primary btn-sm"
+          hx-post="/admin/director/${slug}/tick-now"
+          hx-target="#director-status"
+          hx-swap="outerHTML"
+          ${isProcessing ? "disabled" : ""}
+          title="Force the director to tick within the next 60s instead of waiting for the scheduled tick"
+        >
+          ▶ Tick now
+        </button>
+      </span>
     </div>
   `;
 }
@@ -494,9 +593,19 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       `,
     });
 
+    const statusPanel = renderStatusPanel(
+      db,
+      slug,
+      entry.repoId,
+      budgetState,
+      repo.director.cadence_hours,
+    );
+
     const chatCard = card({
       title: `Chat — ${messages.length} message(s)`,
-      body: renderChatThread(db, slug, messages),
+      body: html`<div class="flex flex-col gap-3">
+        ${statusPanel} ${renderChatThread(db, slug, messages)}
+      </div>`,
     });
 
     const decisionsCard = card({
@@ -642,6 +751,68 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
 
     const messages = recentMessages(db, entry.repoId, 200);
     return c.html(renderChatThread(db, slug, messages).value);
+  });
+
+  // ── GET /:slug/status — render just the status panel ──────────────
+  // HTMX polls this every 10s so the user sees state changes without a
+  // full page reload. Cheap query: just reads budget state.
+  app.get("/:slug/status", (c) => {
+    const slug = c.req.param("slug");
+    const entries = listEntries(db, getConfig);
+    const entry = entries.find((e) => e.slug === slug);
+    if (!entry) return c.notFound();
+
+    const config = getConfig();
+    const repo = config.repos.find((r) => repoKey(r) === slug);
+    if (!repo || !repo.director) return c.notFound();
+
+    const budgetState = ensureBudgetState(db, entry.repoId, repo.director.budget);
+    const panel = renderStatusPanel(
+      db,
+      slug,
+      entry.repoId,
+      budgetState,
+      repo.director.cadence_hours,
+    );
+    return c.html(panel.value);
+  });
+
+  // ── POST /:slug/tick-now — force the director to tick within ~60s ──
+  // Clears last_tick_at; the director loop polls every 60s and treats
+  // null as "should tick". The user sees the status panel flip to
+  // "processing" immediately and the result appears in chat once the
+  // tick completes (typically 10–60s).
+  app.post("/:slug/tick-now", (c) => {
+    const slug = c.req.param("slug");
+    const entries = listEntries(db, getConfig);
+    const entry = entries.find((e) => e.slug === slug);
+    if (!entry) return c.notFound();
+
+    const config = getConfig();
+    const repo = config.repos.find((r) => repoKey(r) === slug);
+    if (!repo || !repo.director) return c.notFound();
+
+    db.prepare(`UPDATE director_budget_state SET last_tick_at = NULL WHERE repo_id = ?`).run(
+      entry.repoId,
+    );
+
+    appendMessage(db, {
+      repoId: entry.repoId,
+      role: "system",
+      type: "tick_log",
+      body: "Tick requested manually via /admin (forces tick on next loop iteration, ≤60s)",
+      metadata: { repo: slug, actor: "admin", action: "tick_now" },
+    });
+
+    const budgetState = ensureBudgetState(db, entry.repoId, repo.director.budget);
+    const panel = renderStatusPanel(
+      db,
+      slug,
+      entry.repoId,
+      budgetState,
+      repo.director.cadence_hours,
+    );
+    return c.html(panel.value);
   });
 
   return app;
