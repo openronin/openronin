@@ -191,6 +191,29 @@ sudo systemctl enable --now openronin-director.service
 
 Director-specific secrets (e.g. `OPENRONIN_DIRECTOR_TELEGRAM_TOKEN`) go in `$OPENRONIN_DATA_DIR/director.env` — kept separate from the main `secrets.env` so they can be rotated independently. Mode `0600` so only the service user can read.
 
+### Self-deploy
+
+If the director is running on the same host that the deploy lane targets (the eat-own-dogfood pattern), add the director-service restart to the per-repo `deploy.commands` so a merge to `main` updates both services in one go. Sudoers needs to allow the new command:
+
+```
+# /etc/sudoers.d/openronin-deploy
+claude ALL=(root) NOPASSWD: /bin/systemctl --no-block restart openronin, /bin/systemctl --no-block restart openronin-director
+```
+
+```yaml
+# per-repo YAML
+deploy:
+  mode: local
+  commands:
+    - cd /data/dev/openronin && git checkout main && git pull --ff-only
+    - cd /data/dev/openronin && pnpm install --frozen-lockfile
+    - cd /data/dev/openronin && pnpm build
+    - sudo /bin/systemctl --no-block restart openronin
+    - sudo /bin/systemctl --no-block restart openronin-director
+```
+
+Without the second restart, the director service runs the OLD `dist/` until the next manual restart — main openronin picks up new code via its own `KillMode=process`, but the director is a separate systemd unit with the same trick so it must be told to recycle.
+
 ## Telegram bridge
 
 Configure two env vars in `$OPENRONIN_DATA_DIR/director.env`:
