@@ -20,6 +20,7 @@ import { appendMessage, unansweredUserDirectives } from "./chat.js";
 import { runTick, type TickReason } from "./tick.js";
 import { releaseTick, tryAcquireTick } from "./active-tick.js";
 import { getLastDigestDate, runDigest, shouldRunDigest } from "./digest.js";
+import { maybePostTrustRampSuggestion } from "./trust-ramp.js";
 import { MimoEngine } from "../engines/mimo.js";
 import type { DirectorConfig } from "./types.js";
 
@@ -174,6 +175,29 @@ async function loopOnce(db: Db, config: RuntimeConfig): Promise<void> {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`[director] digest error on ${repoKey(t.repo)}:`, err);
+    }
+    if (stopping) return;
+    // Trust ramp check is cheap (one SQL aggregate + one cooldown lookup);
+    // running it on every loop tick is fine. The cooldown inside the
+    // helper means it posts to chat at most once a week per repo.
+    try {
+      const suggestion = maybePostTrustRampSuggestion(
+        db,
+        t.repoId,
+        t.director.mode,
+        t.director.language,
+      );
+      if (suggestion) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[director] trust-ramp on ${repoKey(t.repo)}: ${suggestion.kind} ` +
+            `${suggestion.from} → ${suggestion.to} ` +
+            `(rate=${suggestion.rate.toFixed(2)}, n=${suggestion.sampleSize})`,
+        );
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[director] trust-ramp error on ${repoKey(t.repo)}:`, err);
     }
     if (stopping) return;
     const reason = pickTickReason(db, t.repoId, state, t.director.cadence_hours);
