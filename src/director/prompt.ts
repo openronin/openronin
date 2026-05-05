@@ -16,6 +16,7 @@
 import { loadTemplate, renderTemplate } from "../prompts/registry.js";
 import type { RepoConfig } from "../config/schema.js";
 import type { StateSnapshot } from "./state.js";
+import type { Persona } from "./types.js";
 
 export type PromptInputs = {
   ownerName: string;
@@ -23,6 +24,7 @@ export type PromptInputs = {
   charterYaml: string;
   mode: string;
   language: string;
+  persona: Persona;
   state: StateSnapshot;
   dataDir: string;
   repoConfig: RepoConfig;
@@ -34,13 +36,39 @@ export type ComposedPrompt = {
   approxTokensIn: number; // rough — for budget pre-check
 };
 
-const DIRECTOR_SYSTEM = [
-  "You are the Director for an open-source project — a product-owner / project-manager",
-  "running on a 6-hour cadence. You emit machine-readable decisions in strict JSON.",
-  "You never edit source files; the code-writing agent does that. You decide what should",
-  "be worked on, comment on PRs, approve when ready. Stay strictly within the charter.",
-  "When in doubt, ask the user instead of guessing.",
-].join(" ");
+// The system prompt is built dynamically from the persona so the LLM
+// inhabits a real voice rather than the generic "Director" robot. The
+// boilerplate (engine boundary, JSON contract, charter discipline) is
+// invariant; only the voice/role/style is parameterised.
+export function buildSystemPrompt(persona: Persona): string {
+  return [
+    `You are ${persona.name}, the ${persona.role} for an open-source project.`,
+    "Speak in first person. You watch the project, decide what's worth working on next,",
+    "and emit machine-readable decisions in strict JSON.",
+    "",
+    `Voice: ${persona.voice}`,
+    `Style: ${persona.style}`,
+    "",
+    "You never edit source files — a separate code-writing agent does that. You create",
+    "issues, comment on PRs, approve when ready, ask the human when uncertain. Stay",
+    "strictly within the charter. Take ownership: surface stuck PRs, drifting priorities,",
+    "and budget anomalies before the human has to ask.",
+    "When in doubt, ask the user instead of guessing.",
+  ].join(" ");
+}
+
+export function renderPersonaBlock(persona: Persona): string {
+  return [
+    `**Your name:** ${persona.name}`,
+    `**Your role:** ${persona.role}`,
+    `**Your voice:** ${persona.voice}`,
+    `**Your style:** ${persona.style}`,
+    "",
+    "Sign your chat output as yourself — the chat surface labels each bubble with your",
+    "name, so don't repeat your own name inside the body. Speak like a human PM, not a",
+    "templated robot. Acknowledge user messages directly when responding to them.",
+  ].join("\n");
+}
 
 export function composePrompt(inputs: PromptInputs): ComposedPrompt {
   const template = loadTemplate("director-tick", inputs.repoConfig, inputs.dataDir);
@@ -50,14 +78,16 @@ export function composePrompt(inputs: PromptInputs): ComposedPrompt {
     charter_yaml: inputs.charterYaml.trim(),
     mode: inputs.mode,
     language: inputs.language,
+    persona_block: renderPersonaBlock(inputs.persona),
     state_json: JSON.stringify(inputs.state, null, 2),
     chat_transcript: renderChatTranscript(inputs.state.recentChat),
   });
+  const systemPrompt = buildSystemPrompt(inputs.persona);
 
   return {
-    systemPrompt: DIRECTOR_SYSTEM,
+    systemPrompt,
     userPrompt,
-    approxTokensIn: Math.ceil((DIRECTOR_SYSTEM.length + userPrompt.length) / 4),
+    approxTokensIn: Math.ceil((systemPrompt.length + userPrompt.length) / 4),
   };
 }
 

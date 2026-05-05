@@ -53,6 +53,33 @@ export const CharterPrioritySchema = z.object({
 });
 export type CharterPriority = z.infer<typeof CharterPrioritySchema>;
 
+// ── Persona ─────────────────────────────────────────────────────────────
+// Optional voice/personality layer on top of the charter. The default is a
+// neutral "Director" — but a project can declare a named PM with a specific
+// voice ("дружелюбный, без формализмов, признаёт неопределённость") and
+// that voice is woven into the system-prompt and the chat-bubble label.
+//
+// Why on the charter and not on DirectorConfig? Because persona is part of
+// what "good communication on this project" looks like — it's tied to the
+// repo's culture, same as priorities. DirectorConfig stays operational
+// (cadence, mode, budget).
+export const PersonaSchema = z
+  .object({
+    name: z.string().min(1).default("Director"),
+    role: z.string().default("product owner / project manager"),
+    voice: z
+      .string()
+      .default("concise, direct, friendly but professional; admits uncertainty"),
+    style: z
+      .string()
+      .default(
+        "short messages by default; asks rather than guesses; takes ownership; surfaces issues proactively",
+      ),
+    avatar: z.string().optional(),
+  })
+  .default({});
+export type Persona = z.infer<typeof PersonaSchema>;
+
 export const CharterSchema = z.object({
   vision: z.string().min(1),
   priorities: z.array(CharterPrioritySchema).min(1),
@@ -60,6 +87,7 @@ export const CharterSchema = z.object({
   out_of_bounds_paths: z.array(z.string()).default([]),
   definition_of_done: z.array(z.string()).default([]),
   notes: z.string().optional(),
+  persona: PersonaSchema,
 });
 export type Charter = z.infer<typeof CharterSchema>;
 

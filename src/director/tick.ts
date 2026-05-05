@@ -41,7 +41,7 @@ import { parseTickOutput, type ParsedDecision, type TickOutput } from "./decisio
 import { executeDecision } from "./executor.js";
 import { GithubVcsProvider } from "../providers/github.js";
 import type { VcsProvider } from "../providers/vcs.js";
-import type { DecisionType, DirectorConfig } from "./types.js";
+import { PersonaSchema, type DecisionType, type DirectorConfig } from "./types.js";
 import YAML from "yaml";
 
 const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
@@ -131,6 +131,9 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
     charterYaml,
     mode: director.mode,
     language: director.language,
+    // charter loaded via Zod always has persona (PersonaSchema.default({})),
+    // but tests pass plain object literals — fall back to schema defaults.
+    persona: director.charter.persona ?? PersonaSchema.parse({}),
     state,
     dataDir,
     repoConfig: repo,
