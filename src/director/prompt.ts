@@ -17,6 +17,7 @@ import { loadTemplate, renderTemplate } from "../prompts/registry.js";
 import type { RepoConfig } from "../config/schema.js";
 import type { StateSnapshot } from "./state.js";
 import type { Persona } from "./types.js";
+import { renderNotesForPrompt } from "./notes.js";
 
 export type PromptInputs = {
   ownerName: string;
@@ -84,6 +85,7 @@ export function composePrompt(inputs: PromptInputs): ComposedPrompt {
     language: inputs.language,
     persona_block: renderPersonaBlock(inputs.persona),
     tick_reason: inputs.reason ?? "scheduled",
+    standing_notes: renderNotesForPrompt(inputs.state.standingNotes),
     state_json: JSON.stringify(inputs.state, null, 2),
     chat_transcript: renderChatTranscript(inputs.state.recentChat),
   });

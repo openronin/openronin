@@ -8,6 +8,7 @@
 // 30k input tokens needs to stay under the think budget ($1/day default).
 
 import type { Db } from "../storage/db.js";
+import { listNotes, type DirectorNote } from "./notes.js";
 
 export type StateSnapshot = {
   repo: { id: number; owner: string; name: string };
@@ -32,6 +33,10 @@ export type StateSnapshot = {
   // recent failed deploys. The prompt template renders these in their
   // own section so the LLM addresses them before charter-priority work.
   attentionItems: AttentionItem[];
+  // Long-term operator preferences ("don't propose work on weekends",
+  // "every issue should have an Acceptance section", …). Survives the
+  // recentChat window. Capped at 20 in the snapshot.
+  standingNotes: DirectorNote[];
 };
 
 export type AttentionItem = {
@@ -209,6 +214,7 @@ export function captureStateSnapshot(
     recentDecisions,
     pendingDecisionCount,
     attentionItems: collectAttentionItems(db, repoId),
+    standingNotes: listNotes(db, repoId, 20),
   };
 }
 

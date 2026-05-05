@@ -367,4 +367,25 @@ function applyMigrations(db: Db): void {
       "INSERT INTO schema_version (version, applied_at) VALUES (16, datetime('now'))",
     ).run();
   }
+
+  // v17 — Standing operator notes. Long-term memory of "this is how I
+  // want you to behave" that survives the recent_chat windowing. The
+  // director can emit a `remember_preference` decision; the executor
+  // inserts here. Operator can edit/delete via /admin/director.
+  if (current < 17) {
+    db.exec(`
+      CREATE TABLE director_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+        ts TEXT NOT NULL DEFAULT (datetime('now')),
+        kind TEXT NOT NULL,
+        body TEXT NOT NULL,
+        source_message_id INTEGER REFERENCES director_messages(id) ON DELETE SET NULL
+      );
+      CREATE INDEX idx_director_notes_repo_ts ON director_notes(repo_id, ts DESC);
+    `);
+    db.prepare(
+      "INSERT INTO schema_version (version, applied_at) VALUES (17, datetime('now'))",
+    ).run();
+  }
 }

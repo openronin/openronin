@@ -227,6 +227,7 @@ export const DecisionTypeSchema = z.enum([
   "merge_pr", // merges (gated by mode + authority.can_merge)
   "ask_user", // post a question into the chat, expect answer
   "amend_charter", // requires authority.can_modify_charter
+  "remember_preference", // store a long-term operator preference
 ]);
 export type DecisionType = z.infer<typeof DecisionTypeSchema>;
 

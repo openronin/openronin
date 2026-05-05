@@ -64,6 +64,14 @@ const AmendCharterPayload = z.object({
   rationale: z.string().min(20),
 });
 
+// Long-term operator preference. The body is the canonical statement
+// the LLM will see in future ticks under "Standing notes". Kind
+// classifies what sort of preference (free-form so we don't over-spec).
+const RememberPreferencePayload = z.object({
+  body: z.string().min(5).max(500),
+  kind: z.string().default("preference"),
+});
+
 // ── Decision union (discriminated by `type`) ─────────────────────────────
 
 const DecisionSchema = z.discriminatedUnion("type", [
@@ -130,6 +138,12 @@ const DecisionSchema = z.discriminatedUnion("type", [
     rationale: z.string().min(10),
     priority_id: z.string().optional(),
     payload: AmendCharterPayload,
+  }),
+  z.object({
+    type: z.literal("remember_preference"),
+    rationale: z.string().min(10),
+    priority_id: z.string().optional(),
+    payload: RememberPreferencePayload,
   }),
 ]);
 export type ParsedDecision = z.infer<typeof DecisionSchema>;
