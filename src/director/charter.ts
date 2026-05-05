@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import YAML from "yaml";
 import type { Db } from "../storage/db.js";
 import { CharterSchema, type Charter } from "./types.js";
+import { appendMessage } from "./chat.js";
 
 export type CharterVersion = {
   repoId: number;
@@ -32,6 +33,10 @@ export function parseCharter(input: unknown): Charter | null {
 
 // Snapshot the current charter into the versioned table if it's changed
 // since last seen. Returns the version number to stamp on decisions.
+//
+// On version transitions (i.e. v(N) → v(N+1) where N >= 1) we also post a
+// brief chat note summarising what changed — vision-level diffs are
+// important for the operator to confirm without trawling the YAML diff.
 export function captureCharterVersion(db: Db, repoId: number, charter: Charter): number {
   const yaml = YAML.stringify({ charter });
   const latest = db
@@ -47,7 +52,58 @@ export function captureCharterVersion(db: Db, repoId: number, charter: Charter):
     `INSERT INTO director_charter_versions (repo_id, version, charter_yaml)
      VALUES (?, ?, ?)`,
   ).run(repoId, nextVersion, yaml);
+
+  // First version: silent (we just captured it for the first time).
+  // Subsequent versions: surface a diff summary in chat so the operator
+  // — and the next planning tick — both know what changed.
+  if (latest) {
+    try {
+      const oldCharter = (YAML.parse(latest.charter_yaml) as { charter?: Charter })?.charter;
+      const summary = oldCharter ? summariseCharterDiff(oldCharter, charter) : "(charter updated)";
+      appendMessage(db, {
+        repoId,
+        role: "system",
+        type: "tick_log",
+        body: `📜 Charter v${latest.version} → v${nextVersion}\n\n${summary}`,
+        metadata: {
+          kind: "charter_diff",
+          oldVersion: latest.version,
+          newVersion: nextVersion,
+        },
+      });
+    } catch {
+      // Diff is best-effort — never let a render failure break the
+      // version capture itself.
+    }
+  }
+
   return nextVersion;
+}
+
+function summariseCharterDiff(prev: Charter, next: Charter): string {
+  const lines: string[] = [];
+  if (prev.vision !== next.vision) {
+    lines.push(`- Vision changed.`);
+  }
+  const prevPriIds = new Set(prev.priorities.map((p) => p.id));
+  const nextPriIds = new Set(next.priorities.map((p) => p.id));
+  const added = [...nextPriIds].filter((id) => !prevPriIds.has(id));
+  const removed = [...prevPriIds].filter((id) => !nextPriIds.has(id));
+  if (added.length > 0) lines.push(`- Priorities added: ${added.join(", ")}`);
+  if (removed.length > 0) lines.push(`- Priorities removed: ${removed.join(", ")}`);
+  // Weight changes for shared priorities.
+  const weightChanges: string[] = [];
+  for (const p of next.priorities) {
+    const old = prev.priorities.find((x) => x.id === p.id);
+    if (old && Math.abs(old.weight - p.weight) > 0.001) {
+      weightChanges.push(`${p.id}: ${old.weight.toFixed(2)} → ${p.weight.toFixed(2)}`);
+    }
+  }
+  if (weightChanges.length > 0) lines.push(`- Weight changes: ${weightChanges.join("; ")}`);
+  if ((prev.persona?.name ?? "") !== (next.persona?.name ?? "")) {
+    lines.push(`- Persona name: ${prev.persona?.name ?? "—"} → ${next.persona?.name ?? "—"}`);
+  }
+  return lines.length > 0 ? lines.join("\n") : "(no surface-level changes — body only)";
 }
 
 export function getCharterVersion(db: Db, repoId: number, version: number): CharterVersion | null {

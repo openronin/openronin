@@ -99,10 +99,11 @@ export async function executeDecision(opts: ExecuteOptions): Promise<ExecuteResu
     return finalize(db, decisionId, "pending", "queued for human approval");
   }
 
-  // 4. Execute the side-effect via VcsProvider. Each branch is small so the
-  //    fact that we hit the API is obvious in code review.
+  // 4. Execute the side-effect via VcsProvider. Transient errors (5xx,
+  //    timeouts, secondary rate limits) get up to three retries with
+  //    exponential-ish backoff; terminal errors (404 etc.) bubble out.
   try {
-    const detail = await runDecision(opts, repoRef);
+    const detail = await withTransientRetry(() => runDecision(opts, repoRef));
     return finalize(db, decisionId, "executed", detail);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -379,6 +380,44 @@ function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
+// Best-effort retry wrapper for transient VCS errors. Retries are tried
+// at 1s / 5s / 20s — if the third attempt still fails, the error
+// surfaces and outcome=failed kicks in (operator can manually re-approve
+// later). We only retry on errors whose message smells transient: HTTP
+// 5xx, timeouts, network resets, secondary rate limits. 4xx (e.g.
+// "issue not found", "already merged") are NOT retried — they're
+// terminal and retrying is just noise.
+const TRANSIENT_PATTERNS = [
+  /\bECONN(?:RESET|REFUSED|ABORTED)\b/i,
+  /\bETIMEDOUT\b/i,
+  /\b50[0234]\b/, // 500/502/503/504
+  /timeout/i,
+  /secondary rate limit/i,
+];
+
+export function isTransientError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return TRANSIENT_PATTERNS.some((p) => p.test(msg));
+}
+
+export async function withTransientRetry<T>(
+  fn: () => Promise<T>,
+  delaysMs: readonly number[] = [1000, 5000, 20_000],
+): Promise<T> {
+  let attempt = 0;
+  // Non-tail-recursive on purpose so the await chain stays linear.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= delaysMs.length || !isTransientError(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+      attempt++;
+    }
+  }
+}
+
 // ── Type-aware payload merge for edit-before-approve ─────────────────────
 //
 // Operators can tweak a proposal before approving it (rename a sloppy issue
@@ -511,18 +550,20 @@ export async function approveDecision(opts: ApproveOptions): Promise<ApproveResu
   });
 
   try {
-    const detail = await runDecision(
-      {
-        db,
-        decisionId,
-        repoId: decision.repoId,
-        repo,
-        director,
-        decision: parsed,
-        getVcs: opts.getVcs,
-        charterVersion: decision.charterVersion ?? 0,
-      },
-      { owner: repo.owner, name: repo.name },
+    const detail = await withTransientRetry(() =>
+      runDecision(
+        {
+          db,
+          decisionId,
+          repoId: decision.repoId,
+          repo,
+          director,
+          decision: parsed,
+          getVcs: opts.getVcs,
+          charterVersion: decision.charterVersion ?? 0,
+        },
+        { owner: repo.owner, name: repo.name },
+      ),
     );
     setDecisionOutcome(db, decisionId, "executed", detail);
     appendMessage(db, {

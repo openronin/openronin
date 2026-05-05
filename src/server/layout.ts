@@ -156,6 +156,16 @@ export function page(opts: {
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 <script src="https://cdn.jsdelivr.net/npm/marked@14.1.3/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<!--
+  highlight.js for code-fence syntax colour. The director's chat output
+  often contains code/yaml/json blocks; rendering them plain text is hard
+  to read. Common-only build keeps the bundle small (~30KB gzip).
+-->
+<link
+  rel="stylesheet"
+  href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/atom-one-light.min.css"
+/>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/common.min.js"></script>
 <style>
 /* ─── Design Tokens ─────────────────────────────────────────────────────── */
 :root {
