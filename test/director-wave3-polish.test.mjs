@@ -8,10 +8,7 @@ import { join } from "node:path";
 
 import { initDb } from "../dist/storage/db.js";
 import { expireStalePending, recordDecision, getDecisionById } from "../dist/director/decisions.js";
-import {
-  isTransientError,
-  withTransientRetry,
-} from "../dist/director/executor.js";
+import { isTransientError, withTransientRetry } from "../dist/director/executor.js";
 import { captureCharterVersion } from "../dist/director/charter.js";
 import { recentMessages } from "../dist/director/chat.js";
 
@@ -72,14 +69,11 @@ test("isTransientError: matches 5xx / ECONNRESET / timeout; rejects 404", () => 
 
 test("withTransientRetry: succeeds after transient failures", async () => {
   let attempts = 0;
-  const result = await withTransientRetry(
-    async () => {
-      attempts++;
-      if (attempts < 3) throw new Error("503 Service Unavailable");
-      return "ok";
-    },
-    [10, 10, 10],
-  );
+  const result = await withTransientRetry(async () => {
+    attempts++;
+    if (attempts < 3) throw new Error("503 Service Unavailable");
+    return "ok";
+  }, [10, 10, 10]);
   assert.equal(result, "ok");
   assert.equal(attempts, 3);
 });
@@ -87,13 +81,10 @@ test("withTransientRetry: succeeds after transient failures", async () => {
 test("withTransientRetry: gives up after delays exhausted", async () => {
   let attempts = 0;
   await assert.rejects(
-    withTransientRetry(
-      async () => {
-        attempts++;
-        throw new Error("503 still down");
-      },
-      [10, 10],
-    ),
+    withTransientRetry(async () => {
+      attempts++;
+      throw new Error("503 still down");
+    }, [10, 10]),
     /503 still down/,
   );
   assert.equal(attempts, 3); // initial + 2 retries
@@ -102,13 +93,10 @@ test("withTransientRetry: gives up after delays exhausted", async () => {
 test("withTransientRetry: terminal error doesn't retry", async () => {
   let attempts = 0;
   await assert.rejects(
-    withTransientRetry(
-      async () => {
-        attempts++;
-        throw new Error("404 Not Found");
-      },
-      [10, 10],
-    ),
+    withTransientRetry(async () => {
+      attempts++;
+      throw new Error("404 Not Found");
+    }, [10, 10]),
     /404 Not Found/,
   );
   assert.equal(attempts, 1);
