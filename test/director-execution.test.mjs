@@ -430,7 +430,10 @@ test("full_auto close_issue → posts comment then closes", async () => {
         {
           type: "close_issue",
           rationale: "duplicate of an earlier issue thread",
-          payload: { issue_number: 41, reason: "Duplicate of #40 — closing in favour of that one." },
+          payload: {
+            issue_number: 41,
+            reason: "Duplicate of #40 — closing in favour of that one.",
+          },
         },
       ]),
       vcsFactory: vcsFactory(vcs.provider),

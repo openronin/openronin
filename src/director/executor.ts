@@ -77,7 +77,15 @@ export async function executeDecision(opts: ExecuteOptions): Promise<ExecuteResu
   //    explicitly opted in. These return `skipped` regardless of mode.
   const auth = authorityFor(decision, director.authority);
   if (auth.gated) {
-    postChat(db, repoId, repo, "system", "tick_log", `decision skipped: ${auth.reason}`, decisionId);
+    postChat(
+      db,
+      repoId,
+      repo,
+      "system",
+      "tick_log",
+      `decision skipped: ${auth.reason}`,
+      decisionId,
+    );
     return finalize(db, decisionId, "skipped", auth.reason);
   }
 
@@ -118,7 +126,8 @@ function authorityFor(
 ): { gated: false } | { gated: true; reason: string } {
   switch (decision.type) {
     case "create_issue":
-      if (!authority.can_create_issues) return { gated: true, reason: "authority: can_create_issues=false" };
+      if (!authority.can_create_issues)
+        return { gated: true, reason: "authority: can_create_issues=false" };
       return { gated: false };
     case "comment_on_issue":
     case "comment_on_pr":
@@ -129,16 +138,19 @@ function authorityFor(
       if (!authority.can_label) return { gated: true, reason: "authority: can_label=false" };
       return { gated: false };
     case "close_issue":
-      if (!authority.can_close_issues) return { gated: true, reason: "authority: can_close_issues=false" };
+      if (!authority.can_close_issues)
+        return { gated: true, reason: "authority: can_close_issues=false" };
       return { gated: false };
     case "approve_pr":
-      if (!authority.can_approve_pr) return { gated: true, reason: "authority: can_approve_pr=false" };
+      if (!authority.can_approve_pr)
+        return { gated: true, reason: "authority: can_approve_pr=false" };
       return { gated: false };
     case "merge_pr":
       if (!authority.can_merge) return { gated: true, reason: "authority: can_merge=false" };
       return { gated: false };
     case "amend_charter":
-      if (!authority.can_modify_charter) return { gated: true, reason: "authority: can_modify_charter=false" };
+      if (!authority.can_modify_charter)
+        return { gated: true, reason: "authority: can_modify_charter=false" };
       return { gated: false };
     case "ask_user":
     case "no_op":
@@ -218,11 +230,7 @@ async function runDecision(opts: ExecuteOptions, repoRef: VcsRepoRef): Promise<s
     }
 
     case "comment_on_pr": {
-      const r = await vcs.postComment(
-        repoRef,
-        decision.payload.pr_number,
-        decision.payload.body,
-      );
+      const r = await vcs.postComment(repoRef, decision.payload.pr_number, decision.payload.body);
       return `comment posted on PR #${decision.payload.pr_number} (${r.url})`;
     }
 
@@ -247,11 +255,7 @@ async function runDecision(opts: ExecuteOptions, repoRef: VcsRepoRef): Promise<s
     }
 
     case "approve_pr": {
-      await vcs.approvePullRequest(
-        repoRef,
-        decision.payload.pr_number,
-        decision.payload.body,
-      );
+      await vcs.approvePullRequest(repoRef, decision.payload.pr_number, decision.payload.body);
       return `approved PR #${decision.payload.pr_number}`;
     }
 
