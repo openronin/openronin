@@ -400,6 +400,7 @@ function defaultVcsFactory(repo: RepoConfig): VcsProvider {
 const CHAT_INIT_SCRIPT = `
 <script>
 (function(){
+  // Re-render Markdown for any .md-body that hasn't been processed yet.
   function renderMarkdown(root){
     if(!window.marked || !window.DOMPurify) return;
     var nodes = (root || document).querySelectorAll('.md-body:not([data-md-rendered])');
@@ -410,18 +411,52 @@ const CHAT_INIT_SCRIPT = `
       el.setAttribute('data-md-rendered', '1');
     });
   }
-  function scrollChatToBottom(){
+
+  // ── Scroll discipline ──────────────────────────────────────────────
+  // Scroll-to-bottom must NOT fight the user. Rules:
+  //   • Initial page load → scroll once to the bottom.
+  //   • HTMX swap of the chat thread (new message arrived OR composer
+  //     posted) → scroll only if the user was near the bottom before
+  //     the swap. If they had scrolled up to read history, leave them
+  //     alone.
+  //   • HTMX swap of just #director-status (10s status poll) → never
+  //     scroll the chat. The status panel is a separate element from
+  //     the scroll container.
+  var NEAR_BOTTOM_PX = 80;
+  function isNearBottom(el){
+    return el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+  }
+
+  var wasNearBottom = true; // assume true so the first swap follows new messages
+
+  document.body.addEventListener('htmx:beforeSwap', function(e){
+    var c = document.getElementById('chat-scroll');
+    if(c) wasNearBottom = isNearBottom(c);
+  });
+
+  document.body.addEventListener('htmx:afterSwap', function(e){
+    renderMarkdown(document);
+    var swapTarget = e.detail && e.detail.target;
+    var swapId = swapTarget ? swapTarget.id : '';
+    // Only consider scrolling when the swap touched the chat thread.
+    // Status-panel polls (#director-status) must not move the scroll.
+    var touchedChat = swapId === 'chat-thread' || (swapTarget && swapTarget.querySelector && swapTarget.querySelector('#chat-scroll'));
+    if(touchedChat){
+      var c = document.getElementById('chat-scroll');
+      if(c && wasNearBottom) c.scrollTop = c.scrollHeight;
+    }
+  });
+
+  // First-load scroll + markdown. We always scroll on initial load —
+  // user just opened the page and expects to see the latest message.
+  function init(){
+    renderMarkdown(document);
     var c = document.getElementById('chat-scroll');
     if(c) c.scrollTop = c.scrollHeight;
   }
-  function tick(){
-    renderMarkdown(document);
-    scrollChatToBottom();
-  }
   if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', tick);
-  } else { tick(); }
-  document.body.addEventListener('htmx:afterSwap', function(){ tick(); });
+    document.addEventListener('DOMContentLoaded', init);
+  } else { init(); }
 })();
 </script>
 `;
