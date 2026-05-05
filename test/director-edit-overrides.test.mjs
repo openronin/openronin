@@ -7,10 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  editableFieldsFor,
-  mergePayloadOverrides,
-} from "../dist/director/executor.js";
+import { editableFieldsFor, mergePayloadOverrides } from "../dist/director/executor.js";
 
 test("editableFieldsFor: returns expected fields for create_issue", () => {
   const fields = editableFieldsFor("create_issue");

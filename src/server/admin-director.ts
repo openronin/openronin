@@ -170,9 +170,7 @@ type DecisionOutcomeView = {
 function decisionOutcomeView(db: Db, decisionId: number | null): DecisionOutcomeView | null {
   if (decisionId == null) return null;
   const row = db
-    .prepare(
-      `SELECT outcome, outcome_details, decision_type FROM director_decisions WHERE id = ?`,
-    )
+    .prepare(`SELECT outcome, outcome_details, decision_type FROM director_decisions WHERE id = ?`)
     .get(decisionId) as
     | { outcome: string; outcome_details: string | null; decision_type: string }
     | undefined;
@@ -366,10 +364,14 @@ function renderProposalActions(
 // We intentionally render plain form fields rather than a JSON editor —
 // the operator's job is to tweak title/body/labels, not to hand-craft a
 // payload schema.
-function renderEditForm(slug: string, decisionId: number, decision: {
-  decisionType: string;
-  payload: unknown;
-}): TrustedHtml {
+function renderEditForm(
+  slug: string,
+  decisionId: number,
+  decision: {
+    decisionType: string;
+    payload: unknown;
+  },
+): TrustedHtml {
   const p = (decision.payload ?? {}) as Record<string, unknown>;
   const stringField = (name: string, label: string, value: unknown): TrustedHtml => html`
     <label class="flex flex-col gap-1 text-xs">
@@ -429,7 +431,8 @@ ${typeof value === "string" ? value : ""}</textarea
     case "label_issue":
     case "label_pr":
       fields = html`
-        ${csvField("add", "Labels to add", p.add)} ${csvField("remove", "Labels to remove", p.remove)}
+        ${csvField("add", "Labels to add", p.add)}
+        ${csvField("remove", "Labels to remove", p.remove)}
       `;
       break;
     case "close_issue":
