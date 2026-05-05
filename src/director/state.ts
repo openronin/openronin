@@ -297,9 +297,9 @@ function collectAttentionItems(db: Db, repoId: number): AttentionItem[] {
   // 4. Failure streak — director's own bumpFailureStreak counter. >=2
   //    means we've had two failed ticks in a row and should slow down.
   const streak = (
-    db
-      .prepare(`SELECT failure_streak FROM director_budget_state WHERE repo_id = ?`)
-      .get(repoId) as { failure_streak: number } | undefined
+    db.prepare(`SELECT failure_streak FROM director_budget_state WHERE repo_id = ?`).get(repoId) as
+      | { failure_streak: number }
+      | undefined
   )?.failure_streak;
   if (streak && streak >= FAILURE_STREAK_ATTENTION_THRESHOLD) {
     items.push({
