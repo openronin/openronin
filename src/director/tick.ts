@@ -130,6 +130,7 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
     repoName: repo.name,
     charterYaml,
     mode: director.mode,
+    language: director.language,
     state,
     dataDir,
     repoConfig: repo,

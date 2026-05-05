@@ -71,6 +71,19 @@ director:
 
 **Without `enabled: true` and a non-empty `charter`, the Director silently skips that repo.** This is the safe default.
 
+### Language
+
+The director's chat output, `ask_user` questions, proposal bodies, and the bodies of any issue/PR comment it produces are written in `director.language` (default `English`). Free-form string fed verbatim into the prompt — `"Russian"`, `"日本語"`, `"code-mixed Russian/English (technical terms in English)"` all work.
+
+This is **independent** of the existing repo-level `language_for_communication` / `language_for_commits` / `language_for_code_identifiers` — those govern the code-writing agents. A project can communicate via the director in Russian while keeping commit messages and code identifiers in English.
+
+```yaml
+director:
+  language: "Russian"
+```
+
+JSON keys, decision-type identifiers (`create_issue`, `no_op`, …), label names, and other machine-readable tokens always stay in English regardless of this setting.
+
 ## Adaptive budget
 
 Two cost streams, capped independently:

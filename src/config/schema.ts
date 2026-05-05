@@ -234,6 +234,10 @@ export const RepoConfigSchema = z.object({
       mode: DirectorModeSchema.default("dry_run"),
       cadence_hours: z.number().positive().default(6),
       bot_prefix: z.string().default("👔 director:"),
+      // Language the director speaks (chat thread, ask_user, proposal
+      // bodies, issue/PR comments it emits). Independent from the
+      // repo-level language_for_* settings — those govern code agents.
+      language: z.string().default("English"),
       charter: CharterSchema.optional(),
       budget: BudgetConfigSchema,
       authority: DirectorAuthoritySchema,

@@ -62,6 +62,7 @@ const sampleDirector = {
   mode: "dry_run",
   cadence_hours: 6,
   bot_prefix: "👔 director:",
+  language: "English",
   charter: sampleCharter,
   budget: sampleBudget,
   authority: {
@@ -152,6 +153,42 @@ test("decision-schema: validates create_issue payload", () => {
     ],
   });
   assert.equal(out.ok, true);
+});
+
+test("director.language: passed through to prompt template verbatim", async () => {
+  const { db, dir, repoId } = freshDb();
+  let capturedPrompt = "";
+  try {
+    const russianDirector = { ...sampleDirector, language: "Russian" };
+    await runTick({
+      db,
+      repoId,
+      repo: { ...sampleRepo, director: russianDirector },
+      director: russianDirector,
+      dataDir: dir,
+      engineFactory: () => ({
+        id: "mock",
+        defaultModel: "mock",
+        async run(opts) {
+          capturedPrompt = opts.userPrompt;
+          return {
+            content: "{}",
+            json: {
+              observations: "Steady state, ничего срочного — мониторим charter priorities.",
+              reasoning: "Routine planning per charter; nothing pressing this tick.",
+              decisions: [{ type: "no_op", rationale: "Nothing actionable this tick." }],
+            },
+            usage: { tokensIn: 1000, tokensOut: 200, costUsd: 0.001 },
+            finishReason: "end_turn",
+            durationMs: 100,
+          };
+        },
+      }),
+    });
+    assert.match(capturedPrompt, /Communicate in: Russian/);
+  } finally {
+    cleanup(dir);
+  }
 });
 
 test("runTick: dry_run records decisions with outcome=dry_run, posts status to chat", async () => {

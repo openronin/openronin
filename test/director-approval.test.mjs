@@ -60,6 +60,7 @@ function director(mode, overrides = {}) {
     mode,
     cadence_hours: 6,
     bot_prefix: "👔 director:",
+    language: "English",
     charter,
     budget: baseBudget,
     authority: { ...fullAuthority, ...(overrides.authority ?? {}) },
