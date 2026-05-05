@@ -4,6 +4,57 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Fixed — director: inline proposal outcome + fold approve ack/report
+
+Two visual cleanups for the admin chat thread:
+
+1. Proposal bubbles now show their final state inline (`✅ executed: issue #N` / `❌ failed` / `✗ rejected` / `⊘ skipped` / `dry_run`) once the underlying decision is resolved. Previously the user had to scroll to find the matching report message.
+2. The two micro-events that fire on every approve — the user/answer "Approved decision #N" and the director/report "Decision #N executed: …" — are folded into the collapsible noise group, as they are redundant with the inline outcome badge. The audit trail remains in the database.
+
+
+### Fixed — director: chat scroll no longer fights the user
+
+Scroll-to-bottom previously fired on every HTMX swap including the 10-second status-panel poll, making it impossible to scroll up and read history. New rules: scroll to bottom on initial page load; scroll on a new chat message only if the user was within 80 px of the bottom before the swap; never scroll when the status panel refreshes.
+
+
+### Added — director: chat status panel + Tick now button
+
+A status banner above the chat thread shows last/next tick time, unanswered directive count, and a `[▶ Tick now]` button that forces a tick within the next 60 seconds. Auto-refreshes via HTMX every 10 s. Combined with the existing directive form, the loop is "write directive → click Tick now → see result in under 90 s" instead of "wait up to the cadence interval".
+
+New routes: `GET /admin/director/:slug/status` (panel fragment) and `POST /admin/director/:slug/tick-now` (clear `last_tick_at`, log a `tick_log` event).
+
+
+### Added — director: per-repo language setting for the chat thread
+
+The director now writes its chat output (observations, reasoning, `ask_user` questions, proposal bodies, issue/PR comment bodies) in the language configured via `director.language` in the per-repo YAML. Default: English. Free-form string fed verbatim into the prompt; e.g. `"Russian"`, `"日本語"`.
+
+Independent from the existing `language_for_*` settings that govern code-writing agents — a project can chat via the director in Russian while keeping commits and code in English. Decision-type identifiers, JSON keys, and label names always stay in English.
+
+The `.env.example` notes that this setting is per-repo YAML, not an env var.
+
+
+### Added — director: chat UI polish + Director in primary nav
+
+The director chat page was rebuilt with a bottom-up layout, markdown rendering for message bodies, and collapsible groups for noisy system messages. The Director link now appears in the primary admin navigation bar so it is reachable from every page.
+
+
+### Added — director: real LLM-driven planning tick
+
+Replaces the no-op foundation tick with a real LLM call that produces structured decisions. In `dry_run` mode (default) every decision is logged with `outcome=dry_run` and posted to the chat but never executed — the goal is calibration: read what the director would do for a few days, adjust the charter, then graduate to `propose` mode.
+
+New modules:
+
+- `src/director/decision-schema.ts` — Zod discriminated union over 11 decision types (`create_issue`, `comment_on_*`, `label_*`, `close_issue`, `approve_pr`, `merge_pr`, `ask_user`, `amend_charter`, `no_op`).
+- `src/director/state.ts` — curated project-state snapshot for the prompt (open issue / PR / task counts, 24 h cost, recent runs, merges, open PRs, chat history, recent decisions). Bodies trimmed to keep token count bounded.
+- `src/director/prompt.ts` — composes system + user prompt from charter YAML, state snapshot, and chat transcript. Supports per-repo template overrides via `prompts/registry`.
+- `src/director/tick.ts` — pre-flight (rollover, budget gate), capture state + charter version, build prompt, call LLM with `expectJson=true`, parse against `TickOutputSchema`, persist decisions, append a `tick_log` message with observations/reasoning/decision summary + token usage + cost.
+- `prompts/templates/director-tick.md` — overridable per-repo prompt template.
+
+6 tests cover schema validation, end-to-end dry_run tick, propose-mode `outcome=pending`, invalid LLM JSON error path, paused-budget short-circuit, and no_op rendering.
+
+Cost expectations: ~30 k tokens in / ~500 tokens out per tick; ≈ $0.10–$0.15 per tick at default state-snapshot size.
+
+
 ### Added — director: adaptive budget retrospective
 
 Daily/weekly budget caps now move with the director's track record instead of staying static at the YAML-configured initial values. Once per UTC day, on the first tick of the day, `recalibrateBudget()` looks at the last 14 days of terminal decision outcomes:
