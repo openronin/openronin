@@ -15,7 +15,23 @@ export function initDb(dataDir: string): Db {
   return db;
 }
 
+// All migrations run inside a single IMMEDIATE transaction so:
+//   1. Two services starting at the same time (openronin + openronin-director
+//      share the data dir) serialize cleanly. SQLite's IMMEDIATE lock makes
+//      the second arrival wait until the first commits or rolls back.
+//   2. A migration that fails partway through doesn't leave a half-applied
+//      schema. The next startup retries from a known-good state.
+//
+// Production hit case (1) hard during the v14/v15 rollout: each `db.exec`
+// auto-commits per-statement, so a CREATE TABLE could succeed while the
+// matching INSERT INTO schema_version never ran, leaving sqlite_master and
+// schema_version disagreeing. Wrapping with `db.transaction()` makes that
+// impossible. better-sqlite3's transaction wrapper uses BEGIN IMMEDIATE
+// when called eagerly — exactly what we want.
 function applyMigrations(db: Db): void {
+  // schema_version itself must exist before the transaction starts so the
+  // SELECT MAX inside the body has something to read. This is idempotent
+  // and so cheap to do outside the tx.
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (
       version INTEGER PRIMARY KEY,
@@ -23,6 +39,13 @@ function applyMigrations(db: Db): void {
     );
   `);
 
+  const tx = db.transaction(() => applyMigrationsInner(db));
+  // .immediate() acquires a write lock immediately, blocking any sibling
+  // applyMigrations call until we commit or roll back.
+  tx.immediate();
+}
+
+function applyMigrationsInner(db: Db): void {
   const current =
     (db.prepare("SELECT MAX(version) AS v FROM schema_version").get() as { v: number | null }).v ??
     0;
