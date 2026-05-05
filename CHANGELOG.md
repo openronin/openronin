@@ -4,6 +4,43 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Director — UX audit follow-through (Wave 1 + Wave 2 + Wave 3 polish)
+
+A 12-PR sweep that grew out of an audit looking at how the Director feels to operate. Goal: stop feeling like a JSON robot, start feeling like a PM who's actually on call. Schema bumped from **v13 → v17**; 167 → 170 unit tests.
+
+**Wave 1 — make the PM feel alive**
+
+- **Persona / voice.** `charter.persona = { name, role, voice, style, avatar }` is woven into the system prompt so the LLM inhabits a real voice instead of templated boilerplate. The chat-bubble label drops the hardcoded `👔 director:` and becomes the persona name + avatar. Captured per charter version.
+- **Reactive tick + typing indicator + per-repo lock.** Service loop wakes every 10s (was 60s) and fires when *either* cadence elapsed or there are unanswered user messages — chat directives react in <30s. New `director_active_ticks` table doubles as advisory lock and the truth source for the `🟡 \<persona\> is thinking…` indicator (polls 2s while busy / 10s when idle). `TickReason` (`scheduled` | `user_message` | `pr_event` | `deploy_failed` | `manual`) plumbed through `runTick` and into the prompt.
+- **Edit-before-approve.** Each pending proposal grows an `✏ Edit & approve` button next to Approve/Reject. The form is type-aware (title/body/labels for `create_issue`; body for comments; add/remove for labels) pre-populated from the LLM's payload. Submit merges edits onto the stored payload before execution and persists the merged version back to the row, so the audit trail shows what was actually executed.
+- **Decision dedup.** New `payload_hash` column + index + dedup module hash a normalised canonical form of `(decision_type, payload)` (folds case/whitespace/common prefixes/set-order for label arrays). 7-day lookback against pending+executed; duplicates land as `outcome=skipped` with a `duplicate of #N` reason instead of going through the executor. `ask_user` and `no_op` are exempt.
+- **Daily morning digest.** `DigestConfigSchema` (`enabled` / `hour` / `timezone`); pure TZ-aware predicate (`Intl.DateTimeFormat`) so once-per-local-day idempotency is string-only. `runDigest` uses MIMO directly (cheap; never falls over to Sonnet) and posts ONE `status` chat message — no decisions, no executor invocation. New `prompts/templates/director-digest.md`. Service loop fires it before the planning tick on each wake; both share the per-repo lock.
+
+**Wave 2 — proactive PM behaviour**
+
+- **Stale watchdog.** State snapshot grows `attentionItems[]` — stale PRs (>24h), issues stuck in `awaiting-answer` (>48h), recent failed deploys, high failure-streak, full proposal queue. Surfaced under an "Attention first" prompt section so the LLM addresses stuck work before piling on new work.
+- **Trust-ramp suggestion.** Once-per-week-per-repo (cooldown) the loop posts a `question` to chat suggesting mode escalation when ≥30 terminal decisions over 14d at ≥90% executed (or demotion at ≤40% over ≥10). The mode itself stays in YAML — the message tells the operator the line to flip.
+- **Engine split (chat-vs-plan).** `selectThinkEngine` grows a `preferCheap` flag. Reactive ticks (`reason='user_message'`) prefer MIMO (~10× cheaper, faster); scheduled cadence ticks pull Sonnet. `OPENRONIN_DIRECTOR_CHAT_MODEL` pins the chat-reply path to a specific MIMO variant (e.g. `mimo-v2.5-flash`) without touching the planning default.
+- **Standing operator notes.** Long-term "this is how I want you to behave" memory in `director_notes`. New `remember_preference` decision-type — director persists durable preferences without approval. Operator can add/delete via the Standing notes card on `/admin/director/<slug>`. Snapshot includes `standingNotes[]` (capped at 20); prompt renders them under "Standing notes from the operator".
+- **Slash commands in admin chat.** Composer parses `/cmd` prefix: `/tick` `/digest` `/pause` `/resume` `/status` `/budget` `/approve-all` `/help`. Mirrors the Telegram bot's set so the same affordances exist in both surfaces. Each command echoes the typed input (audit) and posts a system response.
+
+**Wave 3 — operational polish**
+
+- **Pending expiry.** Pending decisions untouched for 7d auto-flip to `outcome=expired` with a chat note. The proposal queue can't silently grow.
+- **Transient retry.** VCS calls in the executor wrap in `withTransientRetry`. 5xx / `ECONNRESET` / timeout / "secondary rate limit" get up to 3 attempts at 1s/5s/20s backoff. Terminal errors (404, 422) bubble out unchanged.
+- **Charter diff in chat.** When the YAML changes and a new charter version is captured, the loop posts a brief diff summary (added/removed priorities, weight changes, persona renames). v1 silent; v(N+1) where N≥1 produces the note.
+- **Syntax highlight.** `highlight.js` (common build) added to the admin layout; chat markdown renderer colours code-fences.
+- **Bulk approve.** `✓ Approve all (N)` button in the status panel (when ≥2 pending), POST `/admin/director/:slug/decisions/approve-all`, and `/approve-all` slash command. Each runs through the same `approveDecision` path as the one-by-one button. Pending-count chip in the status panel makes queue depth visible year-round.
+
+**Production stability fixes (not user-facing)**
+
+- **Atomic migrations.** `applyMigrations` body wraps in `db.transaction().immediate()` so two services racing on startup serialise cleanly via SQLite's IMMEDIATE write lock. Earlier in the session this race was the source of nasty `table already exists` / `duplicate column name` crashes during deploys.
+- **Fast shutdown.** Service loop `sleep` splits into 250ms slices and checks `stopping`. Telegram bridge owns an `AbortController` that wraps every `getUpdates` long-poll; `stop()` aborts mid-flight. Captured `watchConfig` cleanup is now called on exit. Final `process.exit(0)` belt-and-braces against any lingering `AbortSignal.timeout` keepalive. End-to-end shutdown drops from ~120s → <1s typical.
+- **Digest engine model.** `runDigest` was passing `model: ""` to `engine.run`; MIMO rejected with `400 Not supported model`. Now reads `engine.defaultModel`.
+
+`docs/DIRECTOR.md` rewritten to reflect everything above.
+
+
 ### Added — director: adaptive budget retrospective
 
 Daily/weekly budget caps now move with the director's track record instead of staying static at the YAML-configured initial values. Once per UTC day, on the first tick of the day, `recalibrateBudget()` looks at the last 14 days of terminal decision outcomes:
