@@ -35,6 +35,7 @@ import type { BudgetState } from "../director/types.js";
 import { latestCharterVersion } from "../director/charter.js";
 import { approveDecision, rejectDecision } from "../director/executor.js";
 import { getActiveTick } from "../director/active-tick.js";
+import { getDecisionById } from "../director/decisions.js";
 import { GithubVcsProvider } from "../providers/github.js";
 import type { VcsProvider } from "../providers/vcs.js";
 import type { DirectorMessage, MessageType } from "../director/types.js";
@@ -163,15 +164,22 @@ function groupNoise(messages: DirectorMessage[]): RenderItem[] {
 type DecisionOutcomeView = {
   outcome: string;
   outcomeDetails: string | null;
+  decisionType: string;
 };
 
 function decisionOutcomeView(db: Db, decisionId: number | null): DecisionOutcomeView | null {
   if (decisionId == null) return null;
   const row = db
-    .prepare(`SELECT outcome, outcome_details FROM director_decisions WHERE id = ?`)
-    .get(decisionId) as { outcome: string; outcome_details: string | null } | undefined;
+    .prepare(`SELECT outcome, outcome_details, decision_type FROM director_decisions WHERE id = ?`)
+    .get(decisionId) as
+    | { outcome: string; outcome_details: string | null; decision_type: string }
+    | undefined;
   if (!row) return null;
-  return { outcome: row.outcome, outcomeDetails: row.outcome_details };
+  return {
+    outcome: row.outcome,
+    outcomeDetails: row.outcome_details,
+    decisionType: row.decision_type,
+  };
 }
 
 function renderMessage(
@@ -207,8 +215,8 @@ function renderMessage(
       </div>
       <div class="rounded-lg border ${bubbleColor} p-3 max-w-[min(42rem,90%)] text-sm shadow-sm">
         <div class="md-body">${m.body}</div>
-        ${isLiveProposal && m.decisionId
-          ? renderProposalActions(slug, m.decisionId)
+        ${isLiveProposal && m.decisionId && proposalOutcome
+          ? renderProposalActions(slug, m.decisionId, proposalOutcome.decisionType)
           : proposalOutcome
             ? renderProposalOutcome(proposalOutcome)
             : ""}
@@ -292,35 +300,261 @@ function renderNoiseGroup(msgs: DirectorMessage[]): TrustedHtml {
   `;
 }
 
-function renderProposalActions(slug: string, decisionId: number): TrustedHtml {
+function renderProposalActions(
+  slug: string,
+  decisionId: number,
+  decisionType: string,
+): TrustedHtml {
+  // The "Edit" button is only meaningful for decision types with a
+  // non-trivial payload — no_op / approve_pr (no body) get the buttons
+  // without the edit affordance.
+  const editable = ![
+    "no_op",
+    // approve_pr has just an optional body, so it IS editable; merge_pr
+    // edits would just change strategy. Both are kept in the editable set.
+  ].includes(decisionType);
+
   return html`
-    <div class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-[var(--border)]">
-      <button
-        class="btn btn-success btn-sm"
-        hx-post="/admin/director/${slug}/decisions/${decisionId}/approve"
-        hx-target="#chat-thread"
-        hx-swap="outerHTML"
-        hx-confirm="Approve and execute decision #${decisionId}?"
-      >
-        ✓ Approve
-      </button>
-      <button
-        class="btn btn-danger btn-sm"
-        hx-post="/admin/director/${slug}/decisions/${decisionId}/reject"
-        hx-target="#chat-thread"
-        hx-swap="outerHTML"
-        hx-vals="js:{reason: document.getElementById('reject-${decisionId}').value}"
-      >
-        ✗ Reject
-      </button>
-      <input
-        id="reject-${decisionId}"
-        type="text"
-        placeholder="reject reason (optional)"
-        class="form-input form-input-sm flex-1 min-w-[14rem] text-xs"
-      />
+    <div class="flex flex-col gap-2 mt-3 pt-3 border-t border-[var(--border)]">
+      <div id="edit-slot-${decisionId}"></div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          class="btn btn-success btn-sm"
+          hx-post="/admin/director/${slug}/decisions/${decisionId}/approve"
+          hx-target="#chat-thread"
+          hx-swap="outerHTML"
+          hx-confirm="Approve and execute decision #${decisionId}?"
+        >
+          ✓ Approve as-is
+        </button>
+        ${editable
+          ? html`<button
+              class="btn btn-secondary btn-sm"
+              hx-get="/admin/director/${slug}/decisions/${decisionId}/edit"
+              hx-target="#edit-slot-${decisionId}"
+              hx-swap="innerHTML"
+            >
+              ✏ Edit & approve
+            </button>`
+          : ""}
+        <button
+          class="btn btn-danger btn-sm"
+          hx-post="/admin/director/${slug}/decisions/${decisionId}/reject"
+          hx-target="#chat-thread"
+          hx-swap="outerHTML"
+          hx-vals="js:{reason: document.getElementById('reject-${decisionId}').value}"
+        >
+          ✗ Reject
+        </button>
+        <input
+          id="reject-${decisionId}"
+          type="text"
+          placeholder="reject reason (optional)"
+          class="form-input form-input-sm flex-1 min-w-[14rem] text-xs"
+        />
+      </div>
     </div>
   `;
+}
+
+// Form for editing a proposal's payload before approving. The set of fields
+// rendered depends on decision_type — see EDITABLE_FIELDS in executor.ts
+// for the source of truth on what's actually applied at execution time.
+//
+// We intentionally render plain form fields rather than a JSON editor —
+// the operator's job is to tweak title/body/labels, not to hand-craft a
+// payload schema.
+function renderEditForm(
+  slug: string,
+  decisionId: number,
+  decision: {
+    decisionType: string;
+    payload: unknown;
+  },
+): TrustedHtml {
+  const p = (decision.payload ?? {}) as Record<string, unknown>;
+  const stringField = (name: string, label: string, value: unknown): TrustedHtml => html`
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="text-[var(--fg-muted)]">${label}</span>
+      <input
+        type="text"
+        name="${name}"
+        value="${typeof value === "string" ? value : ""}"
+        class="form-input form-input-sm"
+      />
+    </label>
+  `;
+  const textArea = (name: string, label: string, value: unknown, rows = 4): TrustedHtml => html`
+    <label class="flex flex-col gap-1 text-xs">
+      <span class="text-[var(--fg-muted)]">${label}</span>
+      <textarea name="${name}" rows="${rows}" class="form-textarea form-textarea-sm">
+${typeof value === "string" ? value : ""}</textarea
+      >
+    </label>
+  `;
+  const csvField = (name: string, label: string, value: unknown): TrustedHtml => {
+    const csv = Array.isArray(value) ? value.join(", ") : "";
+    return html`
+      <label class="flex flex-col gap-1 text-xs">
+        <span class="text-[var(--fg-muted)]">${label} (comma-separated)</span>
+        <input type="text" name="${name}" value="${csv}" class="form-input form-input-sm" />
+      </label>
+    `;
+  };
+  const select = (name: string, label: string, value: unknown, options: string[]): TrustedHtml => {
+    const cur = typeof value === "string" ? value : options[0];
+    return html`
+      <label class="flex flex-col gap-1 text-xs">
+        <span class="text-[var(--fg-muted)]">${label}</span>
+        <select name="${name}" class="form-select form-select-sm">
+          ${options.map(
+            (o) => html`<option value="${o}" ${o === cur ? "selected" : ""}>${o}</option>`,
+          )}
+        </select>
+      </label>
+    `;
+  };
+
+  let fields: TrustedHtml;
+  switch (decision.decisionType) {
+    case "create_issue":
+      fields = html`
+        ${stringField("title", "Title", p.title)} ${textArea("body", "Body (markdown)", p.body, 8)}
+        ${csvField("labels", "Labels", p.labels)}
+        ${select("priority", "Priority", p.priority, ["low", "normal", "high"])}
+      `;
+      break;
+    case "comment_on_issue":
+    case "comment_on_pr":
+      fields = textArea("body", "Comment body (markdown)", p.body, 6);
+      break;
+    case "label_issue":
+    case "label_pr":
+      fields = html`
+        ${csvField("add", "Labels to add", p.add)}
+        ${csvField("remove", "Labels to remove", p.remove)}
+      `;
+      break;
+    case "close_issue":
+      fields = textArea("reason", "Close reason (posted as comment first)", p.reason, 4);
+      break;
+    case "approve_pr":
+      fields = textArea("body", "Review body (optional)", p.body, 4);
+      break;
+    case "merge_pr":
+      fields = select("strategy", "Merge strategy", p.strategy, ["squash", "merge", "rebase"]);
+      break;
+    case "ask_user":
+      fields = html`
+        ${textArea("question", "Question", p.question, 3)}
+        ${textArea("context", "Context (optional)", p.context, 3)}
+      `;
+      break;
+    case "amend_charter":
+      fields = html`
+        ${textArea("proposed_changes", "Proposed changes", p.proposed_changes, 6)}
+        ${textArea("rationale", "Rationale", p.rationale, 3)}
+      `;
+      break;
+    default:
+      fields = html`<p class="text-xs text-[var(--fg-muted)]">
+        This decision type does not support inline editing.
+      </p>`;
+  }
+
+  return html`
+    <form
+      class="flex flex-col gap-2 p-3 border border-[var(--accent)] rounded-md bg-[var(--accent-soft)]"
+      hx-post="/admin/director/${slug}/decisions/${decisionId}/approve"
+      hx-target="#chat-thread"
+      hx-swap="outerHTML"
+    >
+      <div class="text-xs text-[var(--fg-muted)] font-medium">
+        Editing decision #${decisionId} (${decision.decisionType}) — submit to approve with edits
+      </div>
+      ${fields}
+      <div class="flex items-center gap-2">
+        <button type="submit" class="btn btn-success btn-sm">✓ Approve with edits</button>
+        <button
+          type="button"
+          class="btn btn-secondary btn-sm"
+          hx-get="/admin/director/${slug}/decisions/${decisionId}/edit/cancel"
+          hx-target="#edit-slot-${decisionId}"
+          hx-swap="innerHTML"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  `;
+}
+
+// Translate the flat form body into a typed `overrides` object for
+// mergePayloadOverrides. Only fields recognised for the decision-type
+// pass through; unknown fields are dropped server-side too.
+function parseOverridesForm(
+  decisionType: string,
+  form: Record<string, string | File | (string | File)[]>,
+): Record<string, unknown> {
+  const get = (k: string): string | undefined => {
+    const v = form[k];
+    if (typeof v === "string") return v;
+    return undefined;
+  };
+  const overrides: Record<string, unknown> = {};
+  switch (decisionType) {
+    case "create_issue": {
+      if (get("title") !== undefined) overrides.title = String(get("title")).trim();
+      if (get("body") !== undefined) overrides.body = String(get("body"));
+      const labels = get("labels");
+      if (labels !== undefined) {
+        overrides.labels = labels
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+      }
+      if (get("priority") !== undefined) overrides.priority = get("priority");
+      return overrides;
+    }
+    case "comment_on_issue":
+    case "comment_on_pr":
+    case "approve_pr":
+      if (get("body") !== undefined) overrides.body = String(get("body"));
+      return overrides;
+    case "label_issue":
+    case "label_pr": {
+      const csv = (k: string): string[] | undefined => {
+        const v = get(k);
+        if (v === undefined) return undefined;
+        return v
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+      };
+      const add = csv("add");
+      const remove = csv("remove");
+      if (add !== undefined) overrides.add = add;
+      if (remove !== undefined) overrides.remove = remove;
+      return overrides;
+    }
+    case "close_issue":
+      if (get("reason") !== undefined) overrides.reason = String(get("reason"));
+      return overrides;
+    case "merge_pr":
+      if (get("strategy") !== undefined) overrides.strategy = get("strategy");
+      return overrides;
+    case "ask_user":
+      if (get("question") !== undefined) overrides.question = String(get("question"));
+      if (get("context") !== undefined) overrides.context = String(get("context"));
+      return overrides;
+    case "amend_charter":
+      if (get("proposed_changes") !== undefined)
+        overrides.proposed_changes = String(get("proposed_changes"));
+      if (get("rationale") !== undefined) overrides.rationale = String(get("rationale"));
+      return overrides;
+    default:
+      return overrides;
+  }
 }
 
 // ── Tick status panel ────────────────────────────────────────────────
@@ -853,6 +1087,34 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     );
   });
 
+  // ── GET /:slug/decisions/:id/edit ────────────────────────────────────
+  // Returns just the inline edit form for a pending proposal — HTMX swaps
+  // it into the placeholder slot inside the proposal bubble.
+  app.get("/:slug/decisions/:id/edit", (c) => {
+    const slug = c.req.param("slug");
+    const decisionId = Number(c.req.param("id"));
+    const entries = listEntries(db, getConfig);
+    const entry = entries.find((e) => e.slug === slug);
+    if (!entry) return c.notFound();
+    const decision = getDecisionById(db, decisionId);
+    if (!decision || decision.repoId !== entry.repoId) return c.notFound();
+    if (decision.outcome !== "pending") {
+      return c.html(
+        '<p class="text-xs text-[var(--fg-muted)]">This decision is no longer pending.</p>',
+      );
+    }
+    return c.html(
+      renderEditForm(slug, decisionId, {
+        decisionType: decision.decisionType,
+        payload: decision.payload,
+      }).value,
+    );
+  });
+
+  // ── GET /:slug/decisions/:id/edit/cancel ─────────────────────────────
+  // Dismiss the edit form. Returns empty so HTMX clears the slot.
+  app.get("/:slug/decisions/:id/edit/cancel", (c) => c.html(""));
+
   // ── POST /:slug/decisions/:id/approve ────────────────────────────────
   app.post("/:slug/decisions/:id/approve", async (c) => {
     const slug = c.req.param("slug");
@@ -865,6 +1127,18 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     const repo = config.repos.find((r) => repoKey(r) === slug);
     if (!repo || !repo.director) return c.notFound();
 
+    // The body may carry edit-form overrides. Look up the decision so we
+    // know its type and can extract only the relevant fields.
+    const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>);
+    const decision = getDecisionById(db, decisionId);
+    const overrides =
+      decision && Object.keys(form).length > 0
+        ? parseOverridesForm(
+            decision.decisionType,
+            form as Record<string, string | File | (string | File)[]>,
+          )
+        : undefined;
+
     await approveDecision({
       db,
       decisionId,
@@ -872,6 +1146,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       director: repo.director,
       actor: "admin",
       getVcs: () => defaultVcsFactory(repo),
+      overrides: overrides && Object.keys(overrides).length > 0 ? overrides : undefined,
     });
 
     const messages = recentMessages(db, entry.repoId, 200);
