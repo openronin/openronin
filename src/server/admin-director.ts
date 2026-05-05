@@ -1,20 +1,36 @@
-// Admin UI for the Director (read-only in foundation phase).
+// Admin UI for the Director — two-way chat (PR #3b).
 //
-// Mounts at /admin/director — list of director-enabled repos — and
-// /admin/director/:slug — the chat thread + recent decisions for one repo.
-// Two-way chat (HTMX message form, approval buttons) lands in PR #23.
+// Mounts at /admin/director (list) and /admin/director/:slug (per-repo
+// timeline + interactions). HTMX-driven; no JS framework.
+//
+// Interaction surface:
+//   POST /admin/director/:slug/messages
+//        body: type=directive|answer|veto, body=<text>
+//        → appends a user-role message; tick consumes it next cycle.
+//   POST /admin/director/:slug/decisions/:id/approve
+//        → re-runs authority gate, executes the side-effect, flips
+//          outcome to executed (or failed/skipped). Posts a report.
+//   POST /admin/director/:slug/decisions/:id/reject
+//        body: reason=<optional text>
+//        → flips outcome to rejected, records reason as veto message.
+//
+// Each POST returns an HTMX-swapped fragment of the chat thread so the
+// page updates in place without a full reload.
 
 import { Hono } from "hono";
 import type { Db } from "../storage/db.js";
 import type { RuntimeConfig } from "../config/schema.js";
-import { repoKey } from "../config/schema.js";
+import { repoKey, type RepoConfig } from "../config/schema.js";
 import { html, isHtmx, page, t as time, type TrustedHtml } from "./layout.js";
 import { card } from "./components/card.js";
 import { badge, type BadgeTone } from "./components/badge.js";
-import { recentMessages } from "../director/chat.js";
+import { appendMessage, recentMessages } from "../director/chat.js";
 import { recentDecisions } from "../director/decisions.js";
 import { ensureBudgetState, checkBudgetGate } from "../director/budget.js";
 import { latestCharterVersion } from "../director/charter.js";
+import { approveDecision, rejectDecision } from "../director/executor.js";
+import { GithubVcsProvider } from "../providers/github.js";
+import type { VcsProvider } from "../providers/vcs.js";
 import type { DirectorMessage, MessageType } from "../director/types.js";
 
 interface Args {
@@ -28,7 +44,6 @@ type RepoEntry = {
   owner: string;
   name: string;
   mode: string;
-  enabled: boolean;
   hasCharter: boolean;
 };
 
@@ -51,7 +66,6 @@ function listEntries(db: Db, getConfig: () => RuntimeConfig): RepoEntry[] {
       owner: repo.owner,
       name: repo.name,
       mode: d.mode,
-      enabled: d.enabled,
       hasCharter: !!d.charter,
     });
   }
@@ -84,12 +98,25 @@ function messageTypeBadgeTone(type: MessageType): BadgeTone {
       return "danger";
     case "report":
       return "success";
+    case "question":
+      return "info";
     default:
       return "neutral";
   }
 }
 
-function renderMessage(m: DirectorMessage): TrustedHtml {
+// Did this proposal-type message represent a still-pending decision? If
+// the underlying decision has been executed/rejected/etc, we hide the
+// approve/reject buttons.
+function decisionStillPending(db: Db, decisionId: number | null): boolean {
+  if (decisionId == null) return false;
+  const row = db.prepare(`SELECT outcome FROM director_decisions WHERE id = ?`).get(decisionId) as
+    | { outcome: string }
+    | undefined;
+  return row?.outcome === "pending";
+}
+
+function renderMessage(db: Db, slug: string, m: DirectorMessage): TrustedHtml {
   const isDirector = m.role === "director";
   const isUser = m.role === "user";
   const align = isUser ? "ml-auto" : "";
@@ -99,6 +126,9 @@ function renderMessage(m: DirectorMessage): TrustedHtml {
       ? "bg-[var(--accent-soft)]"
       : "bg-[var(--surface-3)]";
   const speaker = isDirector ? "👔 director" : isUser ? "👤 you" : "⚙️ system";
+
+  const isLiveProposal = m.type === "proposal" && decisionStillPending(db, m.decisionId);
+
   return html`
     <div class="flex flex-col gap-1 max-w-[80ch] ${align}">
       <div class="flex items-center gap-2 text-xs text-[var(--text-2)]">
@@ -111,8 +141,97 @@ function renderMessage(m: DirectorMessage): TrustedHtml {
       >
         ${m.body}
       </div>
+      ${isLiveProposal && m.decisionId ? renderProposalActions(slug, m.decisionId) : ""}
     </div>
   `;
+}
+
+function renderProposalActions(slug: string, decisionId: number): TrustedHtml {
+  return html`
+    <div class="flex items-center gap-2 mt-1">
+      <button
+        class="btn btn-success btn-sm"
+        hx-post="/admin/director/${slug}/decisions/${decisionId}/approve"
+        hx-target="#chat-thread"
+        hx-swap="outerHTML"
+        hx-confirm="Approve and execute decision #${decisionId}?"
+      >
+        ✓ Approve
+      </button>
+      <button
+        class="btn btn-danger btn-sm"
+        hx-post="/admin/director/${slug}/decisions/${decisionId}/reject"
+        hx-target="#chat-thread"
+        hx-swap="outerHTML"
+        hx-include="closest div[data-decision-form]"
+      >
+        ✗ Reject
+      </button>
+      <input
+        type="text"
+        name="reason"
+        form="reject-form-${decisionId}"
+        placeholder="reject reason (optional)"
+        class="form-input form-input-sm flex-1 text-xs"
+        data-decision-form
+      />
+    </div>
+  `;
+}
+
+function renderUserMessageForm(slug: string): TrustedHtml {
+  return html`
+    <form
+      class="flex flex-col gap-2 p-3 border border-[var(--border)] rounded-md bg-[var(--surface-2)]"
+      hx-post="/admin/director/${slug}/messages"
+      hx-target="#chat-thread"
+      hx-swap="outerHTML"
+      hx-on::after-request="if(event.detail.successful) this.reset()"
+    >
+      <div class="flex items-center gap-2 text-xs">
+        <label class="text-[var(--text-2)]">Type:</label>
+        <select name="type" class="form-select form-select-sm">
+          <option value="directive">directive</option>
+          <option value="answer">answer</option>
+          <option value="veto">veto</option>
+        </select>
+      </div>
+      <textarea
+        name="body"
+        rows="2"
+        required
+        placeholder="Write a directive (e.g. 'focus on tests this week') or answer the director's last question."
+        class="form-textarea text-sm"
+      ></textarea>
+      <div>
+        <button type="submit" class="btn btn-primary btn-sm">Send</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderChatThread(db: Db, slug: string, messages: DirectorMessage[]): TrustedHtml {
+  return html`
+    <div id="chat-thread" class="flex flex-col gap-3">
+      ${renderUserMessageForm(slug)}
+      ${messages.length === 0
+        ? html`<p class="text-sm text-[var(--text-2)]">
+            Empty thread. The director will start posting here once it ticks.
+          </p>`
+        : html`<div class="flex flex-col gap-3">
+            ${messages.map((m) => renderMessage(db, slug, m))}
+          </div>`}
+    </div>
+  `;
+}
+
+function defaultVcsFactory(repo: RepoConfig): VcsProvider {
+  switch (repo.provider) {
+    case "github":
+      return new GithubVcsProvider();
+    default:
+      throw new Error(`director admin: VcsProvider for ${repo.provider} not wired`);
+  }
 }
 
 export function directorAdminRoute({ db, getConfig }: Args): Hono {
@@ -284,12 +403,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
 
     const chatCard = card({
       title: `Chat — ${messages.length} message(s)`,
-      body:
-        messages.length === 0
-          ? html`<p class="text-sm text-[var(--text-2)]">
-              Empty thread. The director will start posting here once it ticks.
-            </p>`
-          : html` <div class="flex flex-col gap-2">${messages.map(renderMessage)}</div> `,
+      body: renderChatThread(db, slug, messages),
     });
 
     const decisionsCard = card({
@@ -322,7 +436,9 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
                                 ? "success"
                                 : d.outcome === "failed"
                                   ? "danger"
-                                  : "neutral",
+                                  : d.outcome === "rejected"
+                                    ? "warning"
+                                    : "neutral",
                           })}
                         </td>
                         <td>${d.charterVersion ? `v${d.charterVersion}` : "—"}</td>
@@ -353,6 +469,85 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
         ],
       }),
     );
+  });
+
+  // ── POST /:slug/messages — user posts a directive/answer/veto ─────────
+  app.post("/:slug/messages", async (c) => {
+    const slug = c.req.param("slug");
+    const entries = listEntries(db, getConfig);
+    const entry = entries.find((e) => e.slug === slug);
+    if (!entry) return c.notFound();
+
+    const form = await c.req.parseBody();
+    const type = String(form.type ?? "directive");
+    const body = String(form.body ?? "").trim();
+    if (!body) return c.html("body required", 400);
+    if (!["directive", "answer", "veto"].includes(type)) {
+      return c.html("invalid type", 400);
+    }
+
+    appendMessage(db, {
+      repoId: entry.repoId,
+      role: "user",
+      type: type as "directive" | "answer" | "veto",
+      body,
+      metadata: { repo: slug, actor: "admin" },
+    });
+
+    const messages = recentMessages(db, entry.repoId, 100);
+    return c.html(renderChatThread(db, slug, messages).value);
+  });
+
+  // ── POST /:slug/decisions/:id/approve — execute a pending decision ────
+  app.post("/:slug/decisions/:id/approve", async (c) => {
+    const slug = c.req.param("slug");
+    const decisionId = Number(c.req.param("id"));
+    const entries = listEntries(db, getConfig);
+    const entry = entries.find((e) => e.slug === slug);
+    if (!entry) return c.notFound();
+
+    const config = getConfig();
+    const repo = config.repos.find((r) => repoKey(r) === slug);
+    if (!repo || !repo.director) return c.notFound();
+
+    await approveDecision({
+      db,
+      decisionId,
+      repo,
+      director: repo.director,
+      actor: "admin",
+      getVcs: () => defaultVcsFactory(repo),
+    });
+
+    const messages = recentMessages(db, entry.repoId, 100);
+    return c.html(renderChatThread(db, slug, messages).value);
+  });
+
+  // ── POST /:slug/decisions/:id/reject — record reject + reason ─────────
+  app.post("/:slug/decisions/:id/reject", async (c) => {
+    const slug = c.req.param("slug");
+    const decisionId = Number(c.req.param("id"));
+    const entries = listEntries(db, getConfig);
+    const entry = entries.find((e) => e.slug === slug);
+    if (!entry) return c.notFound();
+
+    const config = getConfig();
+    const repo = config.repos.find((r) => repoKey(r) === slug);
+    if (!repo) return c.notFound();
+
+    const form = await c.req.parseBody();
+    const reason = String(form.reason ?? "").trim() || undefined;
+
+    rejectDecision({
+      db,
+      decisionId,
+      repo,
+      actor: "admin",
+      reason,
+    });
+
+    const messages = recentMessages(db, entry.repoId, 100);
+    return c.html(renderChatThread(db, slug, messages).value);
   });
 
   return app;

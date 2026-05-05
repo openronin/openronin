@@ -4,6 +4,19 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Added — director: two-way admin chat (approve/reject + user messages)
+
+The `/admin/director/<slug>` page is no longer read-only. Three new POST endpoints make it a control surface:
+
+- `POST /admin/director/:slug/messages` — operator posts a `directive`/`answer`/`veto` message into the chat thread. Picked up by the next tick.
+- `POST /admin/director/:slug/decisions/:id/approve` — re-runs authority gate, executes the side-effect via `VcsProvider`, flips outcome `pending → executed`/`failed`/`skipped`. Posts a report.
+- `POST /admin/director/:slug/decisions/:id/reject` — flips outcome `pending → rejected`, records optional reason as a `veto`-typed user message.
+
+The pending-proposal chat bubble grows inline `[✓ Approve]`/`[✗ Reject]` buttons (HTMX, no page reload). The thread also gains a `directive`/`answer`/`veto` form at the top.
+
+`approveDecision()` / `rejectDecision()` are exported from `src/director/executor.ts` so the upcoming Telegram bridge can use the same code-path. 5 new tests exercise the full lifecycle including authority re-checks, double-approve guard, and reject-after-execute.
+
+
 ### Added — director: execution backend (decision side-effects via VcsProvider)
 
 The director's `mode` toggle (`dry_run` / `propose` / `semi_auto` / `full_auto`) now actually drives execution. Previously every decision was logged with `outcome=dry_run` regardless of mode; now the executor in `src/director/executor.ts` carries each decision through a mode × authority × decision-type matrix and either:
