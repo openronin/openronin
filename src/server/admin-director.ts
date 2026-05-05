@@ -34,6 +34,7 @@ import { ensureBudgetState, checkBudgetGate } from "../director/budget.js";
 import type { BudgetState } from "../director/types.js";
 import { latestCharterVersion } from "../director/charter.js";
 import { approveDecision, rejectDecision } from "../director/executor.js";
+import { getActiveTick } from "../director/active-tick.js";
 import { GithubVcsProvider } from "../providers/github.js";
 import type { VcsProvider } from "../providers/vcs.js";
 import type { DirectorMessage, MessageType } from "../director/types.js";
@@ -365,13 +366,21 @@ function renderStatusPanel(
   repoId: number,
   budget: BudgetState,
   cadenceHours: number,
+  personaName: string,
+  personaAvatar: string,
 ): TrustedHtml {
   const unanswered = unansweredUserDirectives(db, repoId);
-  const isProcessing = budget.lastTickAt === null;
+  // Truth source for "is the director thinking right now": a fresh row in
+  // director_active_ticks. Stale rows (process crashed mid-tick) are
+  // filtered out by getActiveTick's TTL guard. The previous heuristic
+  // (`budget.lastTickAt === null`) only fired on the very first tick of
+  // a brand-new repo and was effectively dead code.
+  const active = getActiveTick(db, repoId);
+  const isProcessing = active !== null;
 
   // Visual state.
   const stateLabel = isProcessing
-    ? "🟡 Director is processing…"
+    ? `🟡 ${personaAvatar} ${personaName} is thinking… (${active.reason})`
     : budget.paused
       ? "⏸ Paused"
       : "🟢 Idle";
@@ -381,11 +390,15 @@ function renderStatusPanel(
       ? "border-[var(--border)] bg-[var(--surface-sunken)]"
       : "border-[var(--success)] bg-[var(--success-soft)]";
 
+  // While the director is mid-tick, poll faster so the chat refreshes its
+  // result the moment the tick finishes. Idle: 10s is plenty.
+  const pollInterval = isProcessing ? "2s" : "10s";
+
   return html`
     <div
       id="director-status"
       hx-get="/admin/director/${slug}/status"
-      hx-trigger="every 10s"
+      hx-trigger="every ${pollInterval}"
       hx-swap="outerHTML"
       class="rounded-lg border ${stateColor} p-3 text-sm flex flex-wrap items-center gap-x-4 gap-y-2"
     >
@@ -730,6 +743,8 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       entry.repoId,
       budgetState,
       repo.director.cadence_hours,
+      personaName,
+      personaAvatar,
     );
 
     const chatCard = card({
@@ -916,14 +931,16 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       entry.repoId,
       budgetState,
       repo.director.cadence_hours,
+      resolvePersonaName(repo),
+      resolvePersonaAvatar(repo),
     );
     return c.html(panel.value);
   });
 
-  // ── POST /:slug/tick-now — force the director to tick within ~60s ──
-  // Clears last_tick_at; the director loop polls every 60s and treats
+  // ── POST /:slug/tick-now — force the director to tick within ~10s ──
+  // Clears last_tick_at; the director loop wakes every 10s and treats
   // null as "should tick". The user sees the status panel flip to
-  // "processing" immediately and the result appears in chat once the
+  // "thinking" immediately and the result appears in chat once the
   // tick completes (typically 10–60s).
   app.post("/:slug/tick-now", (c) => {
     const slug = c.req.param("slug");
@@ -943,7 +960,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       repoId: entry.repoId,
       role: "system",
       type: "tick_log",
-      body: "Tick requested manually via /admin (forces tick on next loop iteration, ≤60s)",
+      body: "Tick requested manually via /admin (forces tick on next loop iteration, ≤10s)",
       metadata: { repo: slug, actor: "admin", action: "tick_now" },
     });
 
@@ -954,6 +971,8 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       entry.repoId,
       budgetState,
       repo.director.cadence_hours,
+      resolvePersonaName(repo),
+      resolvePersonaAvatar(repo),
     );
     return c.html(panel.value);
   });

@@ -25,6 +25,10 @@ export type PromptInputs = {
   mode: string;
   language: string;
   persona: Persona;
+  // Why this tick is firing — surfaced into the prompt so the LLM can
+  // prioritise (e.g. "user_message" → address the chat first; "scheduled"
+  // → routine planning). Defaults to "scheduled" for legacy callers.
+  reason?: string;
   state: StateSnapshot;
   dataDir: string;
   repoConfig: RepoConfig;
@@ -79,6 +83,7 @@ export function composePrompt(inputs: PromptInputs): ComposedPrompt {
     mode: inputs.mode,
     language: inputs.language,
     persona_block: renderPersonaBlock(inputs.persona),
+    tick_reason: inputs.reason ?? "scheduled",
     state_json: JSON.stringify(inputs.state, null, 2),
     chat_transcript: renderChatTranscript(inputs.state.recentChat),
   });

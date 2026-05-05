@@ -319,4 +319,24 @@ function applyMigrations(db: Db): void {
       "INSERT INTO schema_version (version, applied_at) VALUES (13, datetime('now'))",
     ).run();
   }
+
+  // v14 — Director per-repo lock + in-flight indicator. Doubles as the
+  // backing store for the chat "typing…" indicator: while a row exists for
+  // a repo, the admin UI shows the persona is thinking. Auto-stale via
+  // ttl_s so a crashed tick doesn't wedge the lock forever. PRIMARY KEY
+  // on repo_id ⇒ a single active tick per repo is structurally enforced.
+  if (current < 14) {
+    db.exec(`
+      CREATE TABLE director_active_ticks (
+        repo_id INTEGER PRIMARY KEY REFERENCES repos(id) ON DELETE CASCADE,
+        started_at TEXT NOT NULL DEFAULT (datetime('now')),
+        holder_pid INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        ttl_s INTEGER NOT NULL DEFAULT 300
+      );
+    `);
+    db.prepare(
+      "INSERT INTO schema_version (version, applied_at) VALUES (14, datetime('now'))",
+    ).run();
+  }
 }
