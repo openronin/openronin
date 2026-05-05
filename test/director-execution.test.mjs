@@ -164,7 +164,7 @@ test("dry_run: create_issue → outcome=dry_run, no VCS call", async () => {
       engineFactory: mockEngine([
         {
           type: "create_issue",
-          rationale: "obs gap",
+          rationale: "addresses observability gap in metrics",
           payload: {
             title: "Add metric",
             body: "## Problem\n\nNo metric.\n\n## Acceptance\n- [ ] add",
@@ -233,7 +233,7 @@ test("semi_auto: create_issue executes, merge_pr stays pending", async () => {
       engineFactory: mockEngine([
         {
           type: "create_issue",
-          rationale: "needs",
+          rationale: "needs to land per charter priority",
           payload: {
             title: "auto-create",
             body: "## Problem\n\nfoo\n\n## Done\n- yes",
@@ -243,7 +243,7 @@ test("semi_auto: create_issue executes, merge_pr stays pending", async () => {
         },
         {
           type: "merge_pr",
-          rationale: "ready",
+          rationale: "ready: ci green, addresses charter",
           payload: { pr_number: 7, strategy: "squash" },
         },
       ]),
@@ -274,12 +274,12 @@ test("full_auto: merge_pr executes, charter amend stays pending", async () => {
       engineFactory: mockEngine([
         {
           type: "merge_pr",
-          rationale: "ready",
+          rationale: "ready: ci green, addresses charter",
           payload: { pr_number: 11, strategy: "squash" },
         },
         {
           type: "amend_charter",
-          rationale: "evolution",
+          rationale: "evolve charter for new priority X",
           payload: {
             proposed_changes: "Add new priority X with weight 0.1",
             rationale: "Need more diversity in objectives",
@@ -315,7 +315,7 @@ test("authority: can_merge=false blocks merge_pr in full_auto → outcome=skippe
       engineFactory: mockEngine([
         {
           type: "merge_pr",
-          rationale: "ready",
+          rationale: "ready: ci green, addresses charter",
           payload: { pr_number: 5, strategy: "squash" },
         },
       ]),
@@ -343,7 +343,7 @@ test("authority: can_close_issues=false blocks close_issue", async () => {
       engineFactory: mockEngine([
         {
           type: "close_issue",
-          rationale: "stale",
+          rationale: "stale per charter retrospective",
           payload: { issue_number: 99, reason: "no longer relevant; please reopen if needed" },
         },
       ]),
@@ -429,7 +429,7 @@ test("full_auto close_issue → posts comment then closes", async () => {
       engineFactory: mockEngine([
         {
           type: "close_issue",
-          rationale: "duplicate",
+          rationale: "duplicate of an earlier issue thread",
           payload: { issue_number: 41, reason: "Duplicate of #40 — closing in favour of that one." },
         },
       ]),
@@ -494,7 +494,7 @@ test("full_auto: VCS failure → outcome=failed, error message in chat", async (
       engineFactory: mockEngine([
         {
           type: "create_issue",
-          rationale: "needed",
+          rationale: "needed to address charter goal",
           payload: {
             title: "x",
             body: "## p\n\nthing\n\n## d\n- yes",
