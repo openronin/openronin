@@ -38,7 +38,7 @@ import type { Db } from "../storage/db.js";
 import type { RepoConfig } from "../config/schema.js";
 import { repoKey } from "../config/schema.js";
 import type { VcsProvider, VcsRepoRef } from "../providers/vcs.js";
-import { setDecisionOutcome } from "./decisions.js";
+import { getDecisionById, setDecisionOutcome } from "./decisions.js";
 import { appendMessage } from "./chat.js";
 import type { ParsedDecision } from "./decision-schema.js";
 import type { DecisionOutcome, DirectorAuthority, DirectorConfig } from "./types.js";
@@ -348,4 +348,153 @@ function summariseProposal(d: ParsedDecision): string {
 
 function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
+}
+
+// ── Human approve / reject (from /admin/director or Telegram) ────────────
+//
+// `pending` decisions sit in the queue until a human acts. These two
+// functions are the single entry-points for that action — they live here
+// (not in admin.ts) so the same logic can be reused from the Telegram
+// bridge in PR #4 without duplication.
+
+export type ApproveOptions = {
+  db: Db;
+  decisionId: number;
+  repo: RepoConfig;
+  director: DirectorConfig;
+  actor: string; // "admin" | "telegram:<userId>" — for chat metadata
+  getVcs: () => VcsProvider;
+};
+
+export type ApproveResult =
+  | { ok: true; outcome: DecisionOutcome; details: string }
+  | { ok: false; reason: string };
+
+// Approve a pending decision: re-runs authority gating (operator might have
+// flipped a `can_*` since the decision was queued) then executes the
+// side-effect, just like `executeDecision` would in `full_auto` mode.
+export async function approveDecision(opts: ApproveOptions): Promise<ApproveResult> {
+  const { db, decisionId, repo, director, actor } = opts;
+  const decision = getDecisionById(db, decisionId);
+  if (!decision) return { ok: false, reason: `decision ${decisionId} not found` };
+  if (decision.outcome !== "pending") {
+    return { ok: false, reason: `decision ${decisionId} is ${decision.outcome}, not pending` };
+  }
+  if (decision.repoId !== getRepoIdForRepo(db, repo)) {
+    return { ok: false, reason: `decision ${decisionId} belongs to a different repo` };
+  }
+
+  // Reconstruct a ParsedDecision-shaped object from the stored row. The
+  // schema-validation already ran when the decision was first recorded;
+  // re-validating here is paranoia we'd pay on every approve. Skip it.
+  const parsed = {
+    type: decision.decisionType,
+    rationale: decision.rationale,
+    payload: decision.payload,
+  } as unknown as ParsedDecision;
+
+  // Re-check authority — operator may have flipped a `can_*` between the
+  // proposal and now.
+  const auth = authorityFor(parsed, director.authority);
+  if (auth.gated) {
+    setDecisionOutcome(db, decisionId, "skipped", auth.reason);
+    appendMessage(db, {
+      repoId: decision.repoId,
+      role: "system",
+      type: "tick_log",
+      body: `approval skipped: ${auth.reason}`,
+      metadata: { repo: repoKey(repo), actor, decisionId },
+      decisionId,
+    });
+    return { ok: true, outcome: "skipped", details: auth.reason };
+  }
+
+  appendMessage(db, {
+    repoId: decision.repoId,
+    role: "user",
+    type: "answer",
+    body: `Approved decision #${decisionId} (${decision.decisionType})`,
+    metadata: { repo: repoKey(repo), actor, decisionId, action: "approve" },
+    decisionId,
+  });
+
+  try {
+    const detail = await runDecision(
+      {
+        db,
+        decisionId,
+        repoId: decision.repoId,
+        repo,
+        director,
+        decision: parsed,
+        getVcs: opts.getVcs,
+        charterVersion: decision.charterVersion ?? 0,
+      },
+      { owner: repo.owner, name: repo.name },
+    );
+    setDecisionOutcome(db, decisionId, "executed", detail);
+    appendMessage(db, {
+      repoId: decision.repoId,
+      role: "director",
+      type: "report",
+      body: `Decision #${decisionId} executed: ${detail}`,
+      metadata: { repo: repoKey(repo), actor, decisionId },
+      decisionId,
+    });
+    return { ok: true, outcome: "executed", details: detail };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    setDecisionOutcome(db, decisionId, "failed", detail);
+    appendMessage(db, {
+      repoId: decision.repoId,
+      role: "system",
+      type: "error",
+      body: `Decision #${decisionId} failed on approval execute: ${detail}`,
+      metadata: { repo: repoKey(repo), actor, decisionId },
+      decisionId,
+    });
+    return { ok: true, outcome: "failed", details: detail };
+  }
+}
+
+export type RejectOptions = {
+  db: Db;
+  decisionId: number;
+  repo: RepoConfig;
+  actor: string;
+  reason?: string;
+};
+
+export function rejectDecision(opts: RejectOptions): ApproveResult {
+  const { db, decisionId, repo, actor, reason } = opts;
+  const decision = getDecisionById(db, decisionId);
+  if (!decision) return { ok: false, reason: `decision ${decisionId} not found` };
+  if (decision.outcome !== "pending") {
+    return { ok: false, reason: `decision ${decisionId} is ${decision.outcome}, not pending` };
+  }
+  if (decision.repoId !== getRepoIdForRepo(db, repo)) {
+    return { ok: false, reason: `decision ${decisionId} belongs to a different repo` };
+  }
+
+  const detail = reason ? `rejected: ${reason}` : "rejected by human";
+  setDecisionOutcome(db, decisionId, "rejected", detail);
+  appendMessage(db, {
+    repoId: decision.repoId,
+    role: "user",
+    type: "veto",
+    body: `Rejected decision #${decisionId} (${decision.decisionType})${reason ? `\n\n_Reason:_ ${reason}` : ""}`,
+    metadata: { repo: repoKey(repo), actor, decisionId, action: "reject" },
+    decisionId,
+  });
+  return { ok: true, outcome: "rejected", details: detail };
+}
+
+// Helper: look up our internal repo_id from a RepoConfig (provider/owner/name).
+// Defence-in-depth check that the decision being approved belongs to the
+// repo the request claimed it does.
+function getRepoIdForRepo(db: Db, repo: RepoConfig): number {
+  const row = db
+    .prepare(`SELECT id FROM repos WHERE provider = ? AND owner = ? AND name = ?`)
+    .get(repo.provider, repo.owner, repo.name) as { id: number } | undefined;
+  return row?.id ?? -1;
 }
