@@ -411,4 +411,25 @@ function applyMigrationsInner(db: Db): void {
       "INSERT INTO schema_version (version, applied_at) VALUES (17, datetime('now'))",
     ).run();
   }
+
+  // v18 — Per-decision LLM trace. Adds prompt_text + response_text + a
+  // pair of token/duration columns directly on director_decisions so the
+  // /admin/director/<slug>/decisions/<id> page can show the full prompt
+  // and raw LLM output without a separate table. Capped at 32 KB each
+  // by the writer (truncated with a marker) so a runaway prompt can't
+  // bloat the row.
+  if (current < 18) {
+    db.exec(`
+      ALTER TABLE director_decisions ADD COLUMN prompt_text TEXT;
+      ALTER TABLE director_decisions ADD COLUMN response_text TEXT;
+      ALTER TABLE director_decisions ADD COLUMN tokens_in INTEGER;
+      ALTER TABLE director_decisions ADD COLUMN tokens_out INTEGER;
+      ALTER TABLE director_decisions ADD COLUMN duration_ms INTEGER;
+      ALTER TABLE director_decisions ADD COLUMN engine_id TEXT;
+      ALTER TABLE director_decisions ADD COLUMN model TEXT;
+    `);
+    db.prepare(
+      "INSERT INTO schema_version (version, applied_at) VALUES (18, datetime('now'))",
+    ).run();
+  }
 }

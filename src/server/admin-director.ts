@@ -1163,6 +1163,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
               <table class="data-table text-sm w-full">
                 <thead>
                   <tr>
+                    <th>#</th>
                     <th>Time</th>
                     <th>Type</th>
                     <th>Outcome</th>
@@ -1174,6 +1175,14 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
                   ${decisions.map(
                     (d) => html`
                       <tr>
+                        <td>
+                          <a
+                            class="text-[var(--brand-primary)] hover:underline"
+                            href="/admin/director/${slug}/decisions/${d.id}"
+                            title="Open per-decision trace"
+                            >#${d.id}</a
+                          >
+                        </td>
                         <td>${time(d.ts)}</td>
                         <td><code class="code-inline">${d.decisionType}</code></td>
                         <td>
@@ -1287,6 +1296,157 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     return c.html(
       renderChatThread(db, slug, messages, resolvePersonaName(repo), resolvePersonaAvatar(repo))
         .value,
+    );
+  });
+
+  // ── GET /:slug/decisions/:id ─────────────────────────────────────────
+  // Full per-decision trace: rendered alongside the chat thread but on a
+  // dedicated page so the prompt/response can stretch out without
+  // crowding the chat. Linked from the recent-decisions table.
+  app.get("/:slug/decisions/:id", (c) => {
+    const slug = c.req.param("slug");
+    const decisionId = Number(c.req.param("id"));
+    const entries = listEntries(db, getConfig);
+    const entry = entries.find((e) => e.slug === slug);
+    if (!entry) return c.notFound();
+    const config = getConfig();
+    const repo = config.repos.find((r) => repoKey(r) === slug);
+    const decision = getDecisionById(db, decisionId);
+    if (!decision || decision.repoId !== entry.repoId) return c.notFound();
+
+    const traceCard = card({
+      title: `Decision #${decision.id} — ${decision.decisionType}`,
+      body: html`
+        <div class="flex flex-col gap-2 text-sm">
+          <div class="grid grid-cols-2 gap-x-4 gap-y-1">
+            <div>
+              <div class="text-xs text-[var(--fg-muted)]">Outcome</div>
+              <div>
+                ${badge({
+                  label: decision.outcome,
+                  tone:
+                    decision.outcome === "executed"
+                      ? "success"
+                      : decision.outcome === "failed"
+                        ? "danger"
+                        : decision.outcome === "rejected"
+                          ? "warning"
+                          : "neutral",
+                })}
+                ${decision.outcomeDetails
+                  ? html` <span class="text-xs text-[var(--fg-muted)]"
+                      >${decision.outcomeDetails}</span
+                    >`
+                  : ""}
+              </div>
+            </div>
+            <div>
+              <div class="text-xs text-[var(--fg-muted)]">Charter</div>
+              <div>${decision.charterVersion ? `v${decision.charterVersion}` : "—"}</div>
+            </div>
+            <div>
+              <div class="text-xs text-[var(--fg-muted)]">Created</div>
+              <div>${time(decision.ts)}</div>
+            </div>
+            <div>
+              <div class="text-xs text-[var(--fg-muted)]">Resolved</div>
+              <div>${decision.outcomeTs ? time(decision.outcomeTs) : "—"}</div>
+            </div>
+            <div>
+              <div class="text-xs text-[var(--fg-muted)]">Engine</div>
+              <div>
+                ${decision.engineId ?? "—"}${decision.model
+                  ? html` <span class="text-xs text-[var(--fg-muted)]">${decision.model}</span>`
+                  : ""}
+              </div>
+            </div>
+            <div>
+              <div class="text-xs text-[var(--fg-muted)]">Cost / tokens / latency</div>
+              <div>
+                $${decision.costUsd.toFixed(4)}
+                ${decision.tokensIn !== null
+                  ? html` <span class="text-xs text-[var(--fg-muted)]"
+                      >· ${decision.tokensIn} in / ${decision.tokensOut ?? "?"} out</span
+                    >`
+                  : ""}
+                ${decision.durationMs !== null
+                  ? html` <span class="text-xs text-[var(--fg-muted)]"
+                      >· ${decision.durationMs}ms</span
+                    >`
+                  : ""}
+              </div>
+            </div>
+          </div>
+          <div>
+            <div class="text-xs text-[var(--fg-muted)]">Rationale</div>
+            <div class="md-body whitespace-pre-wrap">${decision.rationale}</div>
+          </div>
+        </div>
+      `,
+    });
+
+    const payloadCard = card({
+      title: "Payload",
+      body: html`<pre
+        class="text-xs bg-[var(--surface-base)] p-3 rounded border border-[var(--border)] overflow-auto whitespace-pre-wrap"
+      >
+${decision.payload ? JSON.stringify(decision.payload, null, 2) : "(no payload)"}</pre
+      >`,
+    });
+
+    const stateCard = card({
+      title: "State snapshot at decision time",
+      body: html`<pre
+        class="text-xs bg-[var(--surface-base)] p-3 rounded border border-[var(--border)] overflow-auto whitespace-pre-wrap"
+      >
+${decision.stateSnapshot ? JSON.stringify(decision.stateSnapshot, null, 2) : "(none)"}</pre
+      >`,
+    });
+
+    const promptCard = decision.promptText
+      ? card({
+          title: "Prompt sent to the LLM",
+          body: html`<details>
+            <summary class="cursor-pointer text-xs text-[var(--fg-muted)] mb-2">
+              Show full prompt (${decision.promptText.length} chars)
+            </summary>
+            <pre
+              class="text-xs bg-[var(--surface-base)] p-3 rounded border border-[var(--border)] overflow-auto whitespace-pre-wrap max-h-[60vh]"
+            >
+${decision.promptText}</pre
+            >
+          </details>`,
+        })
+      : "";
+
+    const responseCard = decision.responseText
+      ? card({
+          title: "Raw LLM response",
+          body: html`<pre
+            class="text-xs bg-[var(--surface-base)] p-3 rounded border border-[var(--border)] overflow-auto whitespace-pre-wrap max-h-[40vh]"
+          >
+${decision.responseText}</pre
+          >`,
+        })
+      : "";
+
+    const body = html`
+      <div class="flex flex-col gap-4">
+        ${traceCard} ${payloadCard} ${stateCard} ${promptCard} ${responseCard}
+      </div>
+    `;
+    return c.html(
+      page({
+        title: `Decision #${decision.id} — ${repo?.owner ?? entry.owner}/${repo?.name ?? entry.name}`,
+        section: "director",
+        body,
+        isHtmx: isHtmx(c.req.raw.headers),
+        breadcrumb: [
+          { label: "Director", href: "/admin/director" },
+          { label: `${entry.owner}/${entry.name}`, href: `/admin/director/${slug}` },
+          { label: `Decision #${decision.id}` },
+        ],
+      }),
     );
   });
 

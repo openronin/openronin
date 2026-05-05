@@ -22,7 +22,25 @@ type DecisionRow = {
   outcome_details: string | null;
   cost_usd: number;
   payload_hash: string | null;
+  prompt_text: string | null;
+  response_text: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  duration_ms: number | null;
+  engine_id: string | null;
+  model: string | null;
 };
+
+// Truncate-with-marker so a runaway prompt can't blow up the row.
+const TRACE_FIELD_CAP = 32 * 1024;
+function capTrace(s: string | null | undefined): string | null {
+  if (!s) return null;
+  if (s.length <= TRACE_FIELD_CAP) return s;
+  return (
+    s.slice(0, TRACE_FIELD_CAP) +
+    `\n\n[... truncated; original was ${s.length} chars, cap is ${TRACE_FIELD_CAP}]`
+  );
+}
 
 function rowToDecision(row: DecisionRow): Decision {
   return {
@@ -38,6 +56,13 @@ function rowToDecision(row: DecisionRow): Decision {
     outcomeTs: row.outcome_ts,
     outcomeDetails: row.outcome_details,
     costUsd: row.cost_usd,
+    promptText: row.prompt_text,
+    responseText: row.response_text,
+    tokensIn: row.tokens_in,
+    tokensOut: row.tokens_out,
+    durationMs: row.duration_ms,
+    engineId: row.engine_id,
+    model: row.model,
   };
 }
 
@@ -65,8 +90,10 @@ export function recordDecision(db: Db, d: NewDecision): Decision {
     .prepare(
       `INSERT INTO director_decisions
          (repo_id, decision_type, rationale, charter_version,
-          state_snapshot, payload, outcome, cost_usd, payload_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          state_snapshot, payload, outcome, cost_usd, payload_hash,
+          prompt_text, response_text, tokens_in, tokens_out,
+          duration_ms, engine_id, model)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`,
     )
     .get(
@@ -79,6 +106,13 @@ export function recordDecision(db: Db, d: NewDecision): Decision {
       d.outcome ?? "pending",
       d.costUsd ?? 0,
       hash,
+      capTrace(d.promptText ?? null),
+      capTrace(d.responseText ?? null),
+      d.tokensIn ?? null,
+      d.tokensOut ?? null,
+      d.durationMs ?? null,
+      d.engineId ?? null,
+      d.model ?? null,
     ) as DecisionRow;
   return rowToDecision(row);
 }

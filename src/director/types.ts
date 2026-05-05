@@ -255,6 +255,16 @@ export type Decision = {
   outcomeTs: string | null;
   outcomeDetails: string | null;
   costUsd: number;
+  // Trace columns — populated only for decisions produced by an LLM tick.
+  // Manual decisions (operator-side approvals) leave them null. Each text
+  // field is capped at 32KB on insert to bound row size.
+  promptText: string | null;
+  responseText: string | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  durationMs: number | null;
+  engineId: string | null;
+  model: string | null;
 };
 
 export type NewDecision = {
@@ -266,6 +276,13 @@ export type NewDecision = {
   payload?: unknown;
   outcome?: DecisionOutcome;
   costUsd?: number;
+  promptText?: string | null;
+  responseText?: string | null;
+  tokensIn?: number | null;
+  tokensOut?: number | null;
+  durationMs?: number | null;
+  engineId?: string | null;
+  model?: string | null;
 };
 
 // ── Tick result ──────────────────────────────────────────────────────────
