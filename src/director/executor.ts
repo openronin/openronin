@@ -38,7 +38,7 @@ import type { Db } from "../storage/db.js";
 import type { RepoConfig } from "../config/schema.js";
 import { repoKey } from "../config/schema.js";
 import type { VcsProvider, VcsRepoRef } from "../providers/vcs.js";
-import { getDecisionById, setDecisionOutcome } from "./decisions.js";
+import { getDecisionById, setDecisionOutcome, setDecisionPayload } from "./decisions.js";
 import { appendMessage } from "./chat.js";
 import type { ParsedDecision } from "./decision-schema.js";
 import type { DecisionOutcome, DirectorAuthority, DirectorConfig } from "./types.js";
@@ -350,6 +350,48 @@ function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
+// ── Type-aware payload merge for edit-before-approve ─────────────────────
+//
+// Operators can tweak a proposal before approving it (rename a sloppy issue
+// title, soften an aggressive comment, drop a label). We don't trust the
+// HTTP form blindly — only known fields per decision_type are honoured.
+// Anything else is dropped silently rather than rejected so a UI quirk
+// can't break approvals.
+const EDITABLE_FIELDS: Record<string, readonly string[]> = {
+  create_issue: ["title", "body", "labels", "priority"],
+  comment_on_issue: ["body"],
+  comment_on_pr: ["body"],
+  label_issue: ["add", "remove"],
+  label_pr: ["add", "remove"],
+  close_issue: ["reason"],
+  approve_pr: ["body"],
+  merge_pr: ["strategy"],
+  ask_user: ["question", "context"],
+  amend_charter: ["proposed_changes", "rationale"],
+};
+
+export function editableFieldsFor(decisionType: string): readonly string[] {
+  return EDITABLE_FIELDS[decisionType] ?? [];
+}
+
+export function mergePayloadOverrides(
+  decisionType: string,
+  original: unknown,
+  overrides: Record<string, unknown>,
+): unknown {
+  const fields = EDITABLE_FIELDS[decisionType];
+  if (!fields) return original; // no_op or unknown type — refuse to edit
+  const base =
+    original && typeof original === "object" ? (original as Record<string, unknown>) : {};
+  const merged: Record<string, unknown> = { ...base };
+  for (const f of fields) {
+    if (Object.prototype.hasOwnProperty.call(overrides, f)) {
+      merged[f] = overrides[f];
+    }
+  }
+  return merged;
+}
+
 // ── Human approve / reject (from /admin/director or Telegram) ────────────
 //
 // `pending` decisions sit in the queue until a human acts. These two
@@ -364,6 +406,12 @@ export type ApproveOptions = {
   director: DirectorConfig;
   actor: string; // "admin" | "telegram:<userId>" — for chat metadata
   getVcs: () => VcsProvider;
+  // Optional human edits to the proposed payload. Merged on top of the
+  // stored payload before execution and persisted back to the decision row
+  // so the audit trail captures what was actually executed, not what was
+  // initially proposed. Type-aware merge — only fields valid for the given
+  // decision_type are honoured (others are dropped).
+  overrides?: Record<string, unknown>;
 };
 
 export type ApproveResult =
@@ -384,13 +432,27 @@ export async function approveDecision(opts: ApproveOptions): Promise<ApproveResu
     return { ok: false, reason: `decision ${decisionId} belongs to a different repo` };
   }
 
+  // Apply human edits (if any) on top of the stored payload. Only fields
+  // valid for this decision-type pass through; everything else is dropped.
+  // We persist the merged payload back to the row before execution so a
+  // failed run still leaves the audit trail showing what we tried.
+  let effectivePayload = decision.payload;
+  if (opts.overrides && Object.keys(opts.overrides).length > 0) {
+    effectivePayload = mergePayloadOverrides(
+      decision.decisionType,
+      decision.payload,
+      opts.overrides,
+    );
+    setDecisionPayload(db, decisionId, effectivePayload);
+  }
+
   // Reconstruct a ParsedDecision-shaped object from the stored row. The
   // schema-validation already ran when the decision was first recorded;
   // re-validating here is paranoia we'd pay on every approve. Skip it.
   const parsed = {
     type: decision.decisionType,
     rationale: decision.rationale,
-    payload: decision.payload,
+    payload: effectivePayload,
   } as unknown as ParsedDecision;
 
   // Re-check authority — operator may have flipped a `can_*` between the

@@ -92,6 +92,17 @@ export function getDecisionById(db: Db, decisionId: number): Decision | null {
   return row ? rowToDecision(row) : null;
 }
 
+// Persist a payload edit on top of an existing pending decision. Used by
+// the edit-before-approve flow so the audit trail records what was actually
+// executed instead of the LLM's original proposal. Caller is responsible
+// for validating the new payload shape — we just store it.
+export function setDecisionPayload(db: Db, decisionId: number, payload: unknown): void {
+  db.prepare(`UPDATE director_decisions SET payload = ? WHERE id = ?`).run(
+    JSON.stringify(payload ?? null),
+    decisionId,
+  );
+}
+
 export function pendingDecisions(db: Db, repoId: number): Decision[] {
   const rows = db
     .prepare(
