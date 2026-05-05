@@ -112,9 +112,7 @@ function messageTypeBadgeTone(type: MessageType): BadgeTone {
 // Group consecutive system / tick_log noise into a single collapsed entry
 // so a long history of "tick skipped" lines doesn't drown out the
 // human-readable conversation. Each non-noise message ends a noise group.
-type RenderItem =
-  | { kind: "msg"; m: DirectorMessage }
-  | { kind: "noise"; msgs: DirectorMessage[] };
+type RenderItem = { kind: "msg"; m: DirectorMessage } | { kind: "noise"; msgs: DirectorMessage[] };
 
 function isNoise(m: DirectorMessage): boolean {
   return m.role === "system" && (m.type === "tick_log" || m.type === "error");
@@ -140,9 +138,9 @@ function groupNoise(messages: DirectorMessage[]): RenderItem[] {
 
 function decisionStillPending(db: Db, decisionId: number | null): boolean {
   if (decisionId == null) return false;
-  const row = db
-    .prepare(`SELECT outcome FROM director_decisions WHERE id = ?`)
-    .get(decisionId) as { outcome: string } | undefined;
+  const row = db.prepare(`SELECT outcome FROM director_decisions WHERE id = ?`).get(decisionId) as
+    | { outcome: string }
+    | undefined;
   return row?.outcome === "pending";
 }
 
@@ -166,9 +164,7 @@ function renderMessage(db: Db, slug: string, m: DirectorMessage): TrustedHtml {
         ${badge({ label: m.type, tone: messageTypeBadgeTone(m.type) })}
         <span>${time(m.ts)}</span>
       </div>
-      <div
-        class="rounded-lg border ${bubbleColor} p-3 max-w-[min(42rem,90%)] text-sm shadow-sm"
-      >
+      <div class="rounded-lg border ${bubbleColor} p-3 max-w-[min(42rem,90%)] text-sm shadow-sm">
         <div class="md-body">${m.body}</div>
         ${isLiveProposal && m.decisionId ? renderProposalActions(slug, m.decisionId) : ""}
       </div>
@@ -184,9 +180,7 @@ function renderNoiseGroup(msgs: DirectorMessage[]): TrustedHtml {
   const summary = `${msgs.length} system event${msgs.length === 1 ? "" : "s"} (${first.type}…${last.type})`;
   return html`
     <details class="w-full text-xs text-[var(--fg-muted)] my-1 px-1">
-      <summary
-        class="cursor-pointer select-none py-1 hover:text-[var(--fg-primary)]"
-      >
+      <summary class="cursor-pointer select-none py-1 hover:text-[var(--fg-primary)]">
         ⚙️ ${summary} · ${time(first.ts)} → ${time(last.ts)}
       </summary>
       <div class="flex flex-col gap-2 mt-2 pl-4 border-l-2 border-[var(--border)]">
@@ -197,7 +191,9 @@ function renderNoiseGroup(msgs: DirectorMessage[]): TrustedHtml {
                 ${badge({ label: m.type, tone: messageTypeBadgeTone(m.type) })}
                 <span>${time(m.ts)}</span>
               </div>
-              <div class="rounded border border-[var(--border)] bg-[var(--surface-sunken)] p-2 text-xs whitespace-pre-wrap">
+              <div
+                class="rounded border border-[var(--border)] bg-[var(--surface-sunken)] p-2 text-xs whitespace-pre-wrap"
+              >
                 ${m.body}
               </div>
             </div>
@@ -268,11 +264,7 @@ function renderComposer(slug: string): TrustedHtml {
   `;
 }
 
-function renderChatThread(
-  db: Db,
-  slug: string,
-  messages: DirectorMessage[],
-): TrustedHtml {
+function renderChatThread(db: Db, slug: string, messages: DirectorMessage[]): TrustedHtml {
   // messages comes ordered ascending by id (oldest first) — render top→bottom.
   const items = groupNoise(messages);
   return html`
