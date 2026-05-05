@@ -368,6 +368,8 @@ function summariseProposal(d: ParsedDecision): string {
       return `→ question:\n\n> ${truncate(d.payload.question, 400)}`;
     case "amend_charter":
       return `→ proposed charter changes:\n\n> ${truncate(d.payload.proposed_changes, 600)}`;
+    case "remember_preference":
+      return `→ remember (${d.payload.kind ?? "preference"}):\n\n> ${truncate(d.payload.body, 400)}`;
     case "no_op":
       return "(no_op)";
   }
