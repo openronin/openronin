@@ -36,6 +36,7 @@ import { latestCharterVersion } from "../director/charter.js";
 import { approveDecision, rejectDecision } from "../director/executor.js";
 import { getActiveTick } from "../director/active-tick.js";
 import { getDecisionById } from "../director/decisions.js";
+import { deleteNote, listNotes, recordNote } from "../director/notes.js";
 import { GithubVcsProvider } from "../providers/github.js";
 import type { VcsProvider } from "../providers/vcs.js";
 import type { DirectorMessage, MessageType } from "../director/types.js";
@@ -667,6 +668,138 @@ function renderStatusPanel(
   `;
 }
 
+// Standing notes panel — long-term operator preferences. Renders as a
+// list of bubbles with a delete button each, plus a tiny add form. The
+// delete button HTMX-replaces the whole card, keeping the surface terse.
+function renderNotesCard(db: Db, slug: string, repoId: number): TrustedHtml {
+  const notes = listNotes(db, repoId, 50);
+  return card({
+    title: `Standing notes — ${notes.length}`,
+    body: html`
+      <div id="notes-card-body" class="flex flex-col gap-2">
+        ${notes.length === 0
+          ? html`<p class="text-xs text-[var(--fg-muted)]">
+              Long-term preferences live here. Tell ${"the director"} "remember:" something to
+              persist beyond the chat window.
+            </p>`
+          : html`<ul class="flex flex-col gap-1">
+              ${notes.map(
+                (n) => html`
+                  <li
+                    class="flex items-start gap-2 text-xs p-2 border border-[var(--border)] rounded bg-[var(--surface-base)]"
+                  >
+                    <span class="font-mono text-[var(--fg-muted)] shrink-0">${n.kind}</span>
+                    <span class="flex-1">${n.body}</span>
+                    <button
+                      class="btn btn-ghost btn-xs"
+                      title="Delete note"
+                      hx-delete="/admin/director/${slug}/notes/${n.id}"
+                      hx-target="#notes-card-body"
+                      hx-swap="outerHTML"
+                      hx-confirm="Delete this note?"
+                    >
+                      ✕
+                    </button>
+                  </li>
+                `,
+              )}
+            </ul>`}
+        <form
+          class="flex flex-col gap-1 pt-2 border-t border-[var(--border)]"
+          hx-post="/admin/director/${slug}/notes"
+          hx-target="#notes-card-body"
+          hx-swap="outerHTML"
+          hx-on::after-request="if(event.detail.successful) this.reset()"
+        >
+          <div class="flex gap-1">
+            <input
+              type="text"
+              name="kind"
+              value="preference"
+              class="form-input form-input-sm w-24 text-xs"
+              required
+            />
+            <input
+              type="text"
+              name="body"
+              placeholder="What should the director remember?"
+              class="form-input form-input-sm flex-1 text-xs"
+              required
+            />
+            <button type="submit" class="btn btn-secondary btn-xs">Add</button>
+          </div>
+        </form>
+      </div>
+    `,
+  });
+}
+
+// HTMX returns just the inner #notes-card-body so we can replace it
+// in-place after add/delete without full-page reload.
+function renderNotesCardBody(db: Db, slug: string, repoId: number): TrustedHtml {
+  const inner = renderNotesCard(db, slug, repoId);
+  // Strip the card chrome — the request swaps just the #notes-card-body
+  // div. We render a "naked" version inline.
+  void inner; // (kept for future symmetric use)
+  const notes = listNotes(db, repoId, 50);
+  return html`
+    <div id="notes-card-body" class="flex flex-col gap-2">
+      ${notes.length === 0
+        ? html`<p class="text-xs text-[var(--fg-muted)]">
+            Long-term preferences live here. Tell the director "remember:" something to persist
+            beyond the chat window.
+          </p>`
+        : html`<ul class="flex flex-col gap-1">
+            ${notes.map(
+              (n) => html`
+                <li
+                  class="flex items-start gap-2 text-xs p-2 border border-[var(--border)] rounded bg-[var(--surface-base)]"
+                >
+                  <span class="font-mono text-[var(--fg-muted)] shrink-0">${n.kind}</span>
+                  <span class="flex-1">${n.body}</span>
+                  <button
+                    class="btn btn-ghost btn-xs"
+                    title="Delete note"
+                    hx-delete="/admin/director/${slug}/notes/${n.id}"
+                    hx-target="#notes-card-body"
+                    hx-swap="outerHTML"
+                    hx-confirm="Delete this note?"
+                  >
+                    ✕
+                  </button>
+                </li>
+              `,
+            )}
+          </ul>`}
+      <form
+        class="flex flex-col gap-1 pt-2 border-t border-[var(--border)]"
+        hx-post="/admin/director/${slug}/notes"
+        hx-target="#notes-card-body"
+        hx-swap="outerHTML"
+        hx-on::after-request="if(event.detail.successful) this.reset()"
+      >
+        <div class="flex gap-1">
+          <input
+            type="text"
+            name="kind"
+            value="preference"
+            class="form-input form-input-sm w-24 text-xs"
+            required
+          />
+          <input
+            type="text"
+            name="body"
+            placeholder="What should the director remember?"
+            class="form-input form-input-sm flex-1 text-xs"
+            required
+          />
+          <button type="submit" class="btn btn-secondary btn-xs">Add</button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
 function renderComposer(slug: string): TrustedHtml {
   return html`
     <form
@@ -1033,9 +1166,13 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
             `,
     });
 
+    const notesCard = renderNotesCard(db, slug, entry.repoId);
+
     const body = html`
       <div class="grid gap-4 lg:grid-cols-3">
-        <div class="lg:col-span-1 flex flex-col gap-4">${charterCard} ${budgetCard}</div>
+        <div class="lg:col-span-1 flex flex-col gap-4">
+          ${charterCard} ${budgetCard} ${notesCard}
+        </div>
         <div class="lg:col-span-2 flex flex-col gap-4">${chatCard} ${decisionsCard}</div>
       </div>
       ${raw(CHAT_INIT_SCRIPT)}
@@ -1250,6 +1387,32 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       resolvePersonaAvatar(repo),
     );
     return c.html(panel.value);
+  });
+
+  // ── POST /:slug/notes ────────────────────────────────────────────────
+  // Add a standing note manually (in addition to the LLM-emitted path).
+  app.post("/:slug/notes", async (c) => {
+    const slug = c.req.param("slug");
+    const entries = listEntries(db, getConfig);
+    const entry = entries.find((e) => e.slug === slug);
+    if (!entry) return c.notFound();
+    const form = await c.req.parseBody();
+    const kind = String(form.kind ?? "preference").trim() || "preference";
+    const body = String(form.body ?? "").trim();
+    if (!body) return c.html("body required", 400);
+    recordNote(db, { repoId: entry.repoId, kind, body });
+    return c.html(renderNotesCardBody(db, slug, entry.repoId).value);
+  });
+
+  // ── DELETE /:slug/notes/:id ──────────────────────────────────────────
+  app.delete("/:slug/notes/:id", (c) => {
+    const slug = c.req.param("slug");
+    const entries = listEntries(db, getConfig);
+    const entry = entries.find((e) => e.slug === slug);
+    if (!entry) return c.notFound();
+    const noteId = Number(c.req.param("id"));
+    deleteNote(db, entry.repoId, noteId);
+    return c.html(renderNotesCardBody(db, slug, entry.repoId).value);
   });
 
   return app;

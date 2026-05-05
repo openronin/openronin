@@ -40,6 +40,7 @@ import { repoKey } from "../config/schema.js";
 import type { VcsProvider, VcsRepoRef } from "../providers/vcs.js";
 import { getDecisionById, setDecisionOutcome, setDecisionPayload } from "./decisions.js";
 import { appendMessage } from "./chat.js";
+import { recordNote } from "./notes.js";
 import type { ParsedDecision } from "./decision-schema.js";
 import type { DecisionOutcome, DirectorAuthority, DirectorConfig } from "./types.js";
 
@@ -152,6 +153,10 @@ function authorityFor(
       if (!authority.can_modify_charter)
         return { gated: true, reason: "authority: can_modify_charter=false" };
       return { gated: false };
+    case "remember_preference":
+      // Always allowed — it's an internal memory write, doesn't touch
+      // the repo or the YAML. Operator can prune via /admin if undesired.
+      return { gated: false };
     case "ask_user":
     case "no_op":
       return { gated: false };
@@ -165,8 +170,15 @@ function decisionNeedsApproval(
   mode: DirectorConfig["mode"],
   _authority: DirectorAuthority,
 ): boolean {
-  // no_op and ask_user are always safe to execute (they don't touch the repo).
-  if (decision.type === "no_op" || decision.type === "ask_user") return false;
+  // no_op / ask_user / remember_preference don't touch the repo — safe to
+  // execute in every mode, no approval required.
+  if (
+    decision.type === "no_op" ||
+    decision.type === "ask_user" ||
+    decision.type === "remember_preference"
+  ) {
+    return false;
+  }
   // amend_charter is always proposal-only — even full_auto must not silently
   // mutate the constitution. Authority gating is what unlocks the proposal
   // surface in the first place.
@@ -192,9 +204,13 @@ function decisionNeedsApproval(
 
 async function runDecision(opts: ExecuteOptions, repoRef: VcsRepoRef): Promise<string> {
   const { db, decisionId, repoId, repo, decision, getVcs } = opts;
-  // Decisions that need a real API call grab the provider here. ask_user
-  // and no_op never call getVcs(), so VcsProvider construction is deferred.
-  const needsVcs = decision.type !== "ask_user" && decision.type !== "no_op";
+  // Decisions that need a real API call grab the provider here. ask_user,
+  // no_op, and remember_preference never call getVcs(), so VcsProvider
+  // construction is deferred for those code paths.
+  const needsVcs =
+    decision.type !== "ask_user" &&
+    decision.type !== "no_op" &&
+    decision.type !== "remember_preference";
   const vcs = needsVcs ? getVcs() : (null as unknown as VcsProvider);
 
   switch (decision.type) {
@@ -273,6 +289,17 @@ async function runDecision(opts: ExecuteOptions, repoRef: VcsRepoRef): Promise<s
       // Should never reach here — amend_charter always needs approval and
       // is intercepted earlier. If we do, fail loudly.
       throw new Error("amend_charter cannot auto-execute (must be human-applied)");
+
+    case "remember_preference": {
+      // Persist a long-term note. The next tick's state-snapshot will
+      // surface it under "Standing notes" and the LLM can act on it.
+      const note = recordNote(db, {
+        repoId,
+        kind: decision.payload.kind ?? "preference",
+        body: decision.payload.body,
+      });
+      return `noted #${note.id} (${note.kind})`;
+    }
   }
 }
 
@@ -341,6 +368,8 @@ function summariseProposal(d: ParsedDecision): string {
       return `→ question:\n\n> ${truncate(d.payload.question, 400)}`;
     case "amend_charter":
       return `→ proposed charter changes:\n\n> ${truncate(d.payload.proposed_changes, 600)}`;
+    case "remember_preference":
+      return `→ remember (${d.payload.kind ?? "preference"}):\n\n> ${truncate(d.payload.body, 400)}`;
     case "no_op":
       return "(no_op)";
   }
@@ -368,6 +397,7 @@ const EDITABLE_FIELDS: Record<string, readonly string[]> = {
   merge_pr: ["strategy"],
   ask_user: ["question", "context"],
   amend_charter: ["proposed_changes", "rationale"],
+  remember_preference: ["body", "kind"],
 };
 
 export function editableFieldsFor(decisionType: string): readonly string[] {
