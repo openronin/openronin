@@ -355,4 +355,18 @@ function applyMigrations(db: Db): void {
       "INSERT INTO schema_version (version, applied_at) VALUES (15, datetime('now'))",
     ).run();
   }
+
+  // v16 — Daily digest dedup. Records the local-TZ date of the most
+  // recent digest run so we fire at most one per calendar day per repo,
+  // independent of how often the service loop wakes up. Stored as plain
+  // ISO date (YYYY-MM-DD) in the configured digest timezone — the
+  // service-loop predicate compares strings, no time math.
+  if (current < 16) {
+    db.exec(
+      `ALTER TABLE director_budget_state ADD COLUMN last_digest_date TEXT`,
+    );
+    db.prepare(
+      "INSERT INTO schema_version (version, applied_at) VALUES (16, datetime('now'))",
+    ).run();
+  }
 }

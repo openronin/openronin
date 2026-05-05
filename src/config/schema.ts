@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   BudgetConfigSchema,
   CharterSchema,
+  DigestConfigSchema,
   DirectorAuthoritySchema,
   DirectorModeSchema,
 } from "../director/types.js";
@@ -241,6 +242,8 @@ export const RepoConfigSchema = z.object({
       charter: CharterSchema.optional(),
       budget: BudgetConfigSchema,
       authority: DirectorAuthoritySchema,
+      // Daily morning digest — see director/types.ts DigestConfigSchema.
+      digest: DigestConfigSchema,
     })
     .default({}),
 });
