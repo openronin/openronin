@@ -36,6 +36,10 @@ You are running in mode `{{mode}}`. The mode controls whether your decisions act
 
 In every mode, prefer fewer high-value decisions over many low-value ones. **An empty/no-op tick is a valid outcome** — say `no_op` and explain why, rather than inventing busywork.
 
+## Attention first
+
+The watchdog populates `state.attentionItems` with things you should look at **before** charter-driven planning: stale PRs, issues stuck in `awaiting-answer`, recent failed deploys, your own failure streak, an over-stuffed proposal queue. If that list is non-empty, address the top items in this tick — don't pile new work on top of stuck work.
+
 ## Project state right now
 
 ```json
