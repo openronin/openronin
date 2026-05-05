@@ -147,6 +147,15 @@ export async function runDirectorService(): Promise<void> {
   process.on("SIGTERM", () => onSignal("SIGTERM"));
   process.on("SIGINT", () => onSignal("SIGINT"));
 
+  // Telegram bridge — opt-in via env, no-op if not configured.
+  const { startDirectorTelegramBridgeIfConfigured } = await import("./telegram.js");
+  const tgBridge = startDirectorTelegramBridgeIfConfigured(db, () => config);
+  if (tgBridge) {
+    // Wire SIGTERM to stop the bridge so it stops polling promptly.
+    process.on("SIGTERM", () => tgBridge.stop());
+    process.on("SIGINT", () => tgBridge.stop());
+  }
+
   // eslint-disable-next-line no-console
   console.log(
     `[director] started (pid ${process.pid}); ${listDirectorEnabledRepos(db, config).length} enabled repo(s); ` +

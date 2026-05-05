@@ -4,6 +4,21 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Added — director: Telegram bridge
+
+The director's chat thread now mirrors to Telegram for whitelisted users, and accepts management commands back. Lets an operator approve / reject / pause / resume from a phone without opening the admin UI.
+
+- **Outbound mirror.** Each new `director_messages` row with `role='director'|'system'` is forwarded to every whitelisted Telegram chat, with a `/approve <id> · /reject <id>` reminder appended to proposals.
+- **Inbound commands** (whitelist enforced):
+  - `/repos`, `/status`, `/budget`, `/pending`, `/help`
+  - `/approve <id>`, `/reject <id> [reason]` — same code path as the admin UI buttons (reuses `approveDecision()` / `rejectDecision()`)
+  - `/pause <slug>`, `/resume <slug>`
+- **Free text** from a whitelisted user is recorded as a `directive`-typed user message. Prefix with `repo:<slug> -- ` to target a specific repo when several are director-enabled.
+- Configured via `OPENRONIN_DIRECTOR_TELEGRAM_TOKEN` (separate bot from the tracker provider's `TELEGRAM_BOT_TOKEN`) and `OPENRONIN_DIRECTOR_TELEGRAM_USER_IDS=12345,67890`. Bridge refuses to start if token is set but whitelist is empty.
+- Runs in-process inside `openronin-director.service` alongside the tick loop. Two background async tasks: long-poll for inbound updates, 5s-interval mirror of new director messages outbound.
+- 6 tests with mocked `fetch()` cover incoming directive, /approve, /reject, /pending, /pause+/resume, and unauthorized-user filter.
+
+
 ### Added — director: two-way admin chat (approve/reject + user messages)
 
 The `/admin/director/<slug>` page is no longer read-only. Three new POST endpoints make it a control surface:
