@@ -4,6 +4,21 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Added — director: execution backend (decision side-effects via VcsProvider)
+
+The director's `mode` toggle (`dry_run` / `propose` / `semi_auto` / `full_auto`) now actually drives execution. Previously every decision was logged with `outcome=dry_run` regardless of mode; now the executor in `src/director/executor.ts` carries each decision through a mode × authority × decision-type matrix and either:
+
+- Logs only (`dry_run`)
+- Records `outcome=pending` and posts a `proposal`-type chat message asking for human approval (`propose`, plus `merge_pr` in `semi_auto`, plus `amend_charter` always)
+- Calls the relevant `VcsProvider` method and records `outcome=executed` with the artifact ref (issue/PR number, comment URL)
+- Records `outcome=skipped` when the operator hasn't opted in via `authority.can_*`
+- Records `outcome=failed` with the error detail when the side-effect throws
+
+`VcsProvider` was extended with the methods the executor needs (`createIssue`, `addLabels`, `removeLabels`, `approvePullRequest`, plus the existing `postComment`, `closeItem`, `mergePullRequest`); both GitHub and GitLab implement them. The HTMX approve/reject buttons that flip a `pending` decision to `executed`/`rejected` land in the next change (PR #3b) — for now, pending decisions sit in the chat with instructions on what's coming.
+
+15 new tests cover every cell of the matrix with a mock VcsProvider; no live API calls in the test suite.
+
+
 ### Fixed — director: engine fallback and failure-streak hardening
 
 The director's LLM-tick previously assumed `ANTHROPIC_API_KEY` was always available, throwing on construction when it wasn't and looping on the same error every minute (because the construction-failure path didn't mark the tick or bump the failure streak). Now:
