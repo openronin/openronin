@@ -63,9 +63,7 @@ export function recordNote(db: Db, n: NewDirectorNote): DirectorNote {
 
 export function listNotes(db: Db, repoId: number, limit = 50): DirectorNote[] {
   const rows = db
-    .prepare(
-      `SELECT * FROM director_notes WHERE repo_id = ? ORDER BY id DESC LIMIT ?`,
-    )
+    .prepare(`SELECT * FROM director_notes WHERE repo_id = ? ORDER BY id DESC LIMIT ?`)
     .all(repoId, limit) as Row[];
   return rows.map(rowToNote);
 }
@@ -81,7 +79,8 @@ export function deleteNote(db: Db, repoId: number, noteId: number): boolean {
 // doesn't dominate the context. Format is plain "- kind: body" lines —
 // the LLM can read these without ceremony.
 export function renderNotesForPrompt(notes: DirectorNote[]): string {
-  if (notes.length === 0) return "(no standing notes — operator hasn't told you anything to remember yet)";
+  if (notes.length === 0)
+    return "(no standing notes — operator hasn't told you anything to remember yet)";
   return notes
     .slice(0, 20)
     .map((n) => `- ${n.kind}: ${n.body}`)

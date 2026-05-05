@@ -13,12 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { initDb } from "../dist/storage/db.js";
-import {
-  deleteNote,
-  listNotes,
-  recordNote,
-  renderNotesForPrompt,
-} from "../dist/director/notes.js";
+import { deleteNote, listNotes, recordNote, renderNotesForPrompt } from "../dist/director/notes.js";
 import { runTick } from "../dist/director/tick.js";
 import { captureStateSnapshot } from "../dist/director/state.js";
 
@@ -56,8 +51,22 @@ test("recordNote / listNotes / deleteNote round-trip", () => {
 test("renderNotesForPrompt: empty list → placeholder; non-empty formats kv-style", () => {
   assert.match(renderNotesForPrompt([]), /no standing notes/);
   const formatted = renderNotesForPrompt([
-    { id: 1, repoId: 1, ts: "2026-05-05", kind: "preference", body: "no work on weekends", sourceMessageId: null },
-    { id: 2, repoId: 1, ts: "2026-05-05", kind: "fact", body: "deploys go through 0srv", sourceMessageId: null },
+    {
+      id: 1,
+      repoId: 1,
+      ts: "2026-05-05",
+      kind: "preference",
+      body: "no work on weekends",
+      sourceMessageId: null,
+    },
+    {
+      id: 2,
+      repoId: 1,
+      ts: "2026-05-05",
+      kind: "fact",
+      body: "deploys go through 0srv",
+      sourceMessageId: null,
+    },
   ]);
   assert.match(formatted, /- preference: no work on weekends/);
   assert.match(formatted, /- fact: deploys go through 0srv/);
