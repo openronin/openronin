@@ -143,11 +143,38 @@ export class GithubVcsProvider implements VcsProvider {
   }
 
   async addLabel(repo: VcsRepoRef, number: number, label: string): Promise<void> {
+    await this.addLabels(repo, number, [label]);
+  }
+
+  async addLabels(repo: VcsRepoRef, number: number, labels: string[]): Promise<void> {
+    if (labels.length === 0) return;
     await this.octokit.issues.addLabels({
       owner: repo.owner,
       repo: repo.name,
       issue_number: number,
-      labels: [label],
+      labels,
+    });
+  }
+
+  async removeLabels(repo: VcsRepoRef, number: number, labels: string[]): Promise<void> {
+    // Octokit's removeLabel is per-label; loop and ignore 404s (the label
+    // might not have been on the issue, that's fine).
+    for (const label of labels) {
+      try {
+        await this.removeLabel(repo, number, label);
+      } catch (err) {
+        if (!isNotFound(err)) throw err;
+      }
+    }
+  }
+
+  async approvePullRequest(repo: VcsRepoRef, prNumber: number, body?: string): Promise<void> {
+    await this.octokit.pulls.createReview({
+      owner: repo.owner,
+      repo: repo.name,
+      pull_number: prNumber,
+      event: "APPROVE",
+      ...(body && { body }),
     });
   }
 

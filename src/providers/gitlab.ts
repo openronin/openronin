@@ -334,6 +334,17 @@ export class GitlabVcsProvider implements VcsProvider {
     await this.put(`/projects/${pid}/${resource}/${number}`, { add_labels: label }).catch(() => {});
   }
 
+  async addLabels(repo: VcsRepoRef, number: number, labels: string[]): Promise<void> {
+    if (labels.length === 0) return;
+    // GitLab accepts comma-separated list; one round-trip.
+    const pid = this.projectId(repo);
+    const kind = this._kindCache.get(this.kindKey(repo, number));
+    const resource = kind === "pull_request" ? "merge_requests" : "issues";
+    await this.put(`/projects/${pid}/${resource}/${number}`, {
+      add_labels: labels.join(","),
+    }).catch(() => {});
+  }
+
   async removeLabel(repo: VcsRepoRef, number: number, label: string): Promise<void> {
     const pid = this.projectId(repo);
     const kind = this._kindCache.get(this.kindKey(repo, number));
@@ -341,6 +352,36 @@ export class GitlabVcsProvider implements VcsProvider {
     await this.put(`/projects/${pid}/${resource}/${number}`, {
       remove_labels: label,
     }).catch(() => {});
+  }
+
+  async removeLabels(repo: VcsRepoRef, number: number, labels: string[]): Promise<void> {
+    if (labels.length === 0) return;
+    const pid = this.projectId(repo);
+    const kind = this._kindCache.get(this.kindKey(repo, number));
+    const resource = kind === "pull_request" ? "merge_requests" : "issues";
+    await this.put(`/projects/${pid}/${resource}/${number}`, {
+      remove_labels: labels.join(","),
+    }).catch(() => {});
+  }
+
+  async createIssue(
+    repo: VcsRepoRef,
+    args: { title: string; body?: string; labels?: string[] },
+  ): Promise<{ number: number; url: string }> {
+    const pid = this.projectId(repo);
+    const data = await this.post<{ iid: number; web_url: string }>(`/projects/${pid}/issues`, {
+      title: args.title,
+      description: args.body ?? "",
+      labels: (args.labels ?? []).join(","),
+    });
+    return { number: data.iid, url: data.web_url };
+  }
+
+  async approvePullRequest(repo: VcsRepoRef, mrNumber: number, _body?: string): Promise<void> {
+    const pid = this.projectId(repo);
+    // GitLab MR approval doesn't take a body; if the caller wants to leave
+    // a comment, they should call postComment in addition.
+    await this.post(`/projects/${pid}/merge_requests/${mrNumber}/approve`, {});
   }
 
   async ensureLabelExists(
