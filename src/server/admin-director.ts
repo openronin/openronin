@@ -175,8 +175,7 @@ function renderMessage(db: Db, slug: string, m: DirectorMessage): TrustedHtml {
   // For proposals, the underlying decision's outcome is part of the bubble
   // — buttons when pending, a closed-out badge when resolved. Keeps the
   // proposal-and-its-result colocated instead of scrolling to find them.
-  const proposalOutcome =
-    m.type === "proposal" ? decisionOutcomeView(db, m.decisionId) : null;
+  const proposalOutcome = m.type === "proposal" ? decisionOutcomeView(db, m.decisionId) : null;
   const isLiveProposal = proposalOutcome?.outcome === "pending" && m.decisionId != null;
 
   return html`
