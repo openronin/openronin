@@ -89,9 +89,9 @@ test("runSlashCommand /tick: clears last_tick_at", async () => {
   const { db, dir, repoId } = freshDb();
   ensureBudgetState(db, repoId, sampleBudget);
   // Bump last_tick_at so we can verify it gets cleared.
-  db.prepare(`UPDATE director_budget_state SET last_tick_at = datetime('now') WHERE repo_id = ?`).run(
-    repoId,
-  );
+  db.prepare(
+    `UPDATE director_budget_state SET last_tick_at = datetime('now') WHERE repo_id = ?`,
+  ).run(repoId);
   try {
     await runSlashCommand({
       db,
