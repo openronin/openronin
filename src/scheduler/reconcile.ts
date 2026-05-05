@@ -107,6 +107,18 @@ async function pollOurPrs(
       enqueue(db, prTaskId, newCount > 0 ? "high" : "normal", null);
       enqueued += 1;
     } catch (error) {
+      // 404 means the PR no longer exists on this owner — usually after
+      // a repo rename/transfer. Mark the branch as closed so reconcile
+      // stops polling it and the dashboard reflects reality.
+      if (isVcs404(error)) {
+        db.prepare(
+          "UPDATE pr_branches SET status = 'closed', updated_at = datetime('now') WHERE id = ?",
+        ).run(b.id);
+        console.warn(
+          `[reconcile] PR ${repo.owner}/${repo.name}#${b.pr_number} returned 404 — marked closed`,
+        );
+        continue;
+      }
       console.warn(
         `[reconcile] pr-poll failed for ${repo.owner}/${repo.name}#${b.pr_number}:`,
         error instanceof Error ? error.message : error,
@@ -114,6 +126,16 @@ async function pollOurPrs(
     }
   }
   return { polled, enqueued };
+}
+
+function isVcs404(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const e = error as { status?: number; message?: string };
+  if (e.status === 404) return true;
+  if (typeof e.message === "string" && /\b404\b.*Not Found|Not Found.*\b404\b/i.test(e.message)) {
+    return true;
+  }
+  return false;
 }
 
 // Reconcile Jira tracker for a repo that has jira_tracker config set.
