@@ -116,7 +116,16 @@ function messageTypeBadgeTone(type: MessageType): BadgeTone {
 type RenderItem = { kind: "msg"; m: DirectorMessage } | { kind: "noise"; msgs: DirectorMessage[] };
 
 function isNoise(m: DirectorMessage): boolean {
-  return m.role === "system" && (m.type === "tick_log" || m.type === "error");
+  // System tick_log / error: housekeeping output the human shouldn't
+  // need to scan in normal operation.
+  if (m.role === "system" && (m.type === "tick_log" || m.type === "error")) return true;
+  // Per-approval acks and execution reports: useful audit trail, but
+  // visually redundant with the inline outcome badge on the proposal
+  // itself. Pattern-match to fold them without losing the records.
+  if (m.role === "user" && m.type === "answer" && /^Approved decision #/.test(m.body)) return true;
+  if (m.role === "director" && m.type === "report" && /^Decision #\d+ executed:/.test(m.body))
+    return true;
+  return false;
 }
 
 function groupNoise(messages: DirectorMessage[]): RenderItem[] {
@@ -137,12 +146,18 @@ function groupNoise(messages: DirectorMessage[]): RenderItem[] {
   return out;
 }
 
-function decisionStillPending(db: Db, decisionId: number | null): boolean {
-  if (decisionId == null) return false;
-  const row = db.prepare(`SELECT outcome FROM director_decisions WHERE id = ?`).get(decisionId) as
-    | { outcome: string }
-    | undefined;
-  return row?.outcome === "pending";
+type DecisionOutcomeView = {
+  outcome: string;
+  outcomeDetails: string | null;
+};
+
+function decisionOutcomeView(db: Db, decisionId: number | null): DecisionOutcomeView | null {
+  if (decisionId == null) return null;
+  const row = db
+    .prepare(`SELECT outcome, outcome_details FROM director_decisions WHERE id = ?`)
+    .get(decisionId) as { outcome: string; outcome_details: string | null } | undefined;
+  if (!row) return null;
+  return { outcome: row.outcome, outcomeDetails: row.outcome_details };
 }
 
 function renderMessage(db: Db, slug: string, m: DirectorMessage): TrustedHtml {
@@ -156,7 +171,13 @@ function renderMessage(db: Db, slug: string, m: DirectorMessage): TrustedHtml {
       ? "bg-[var(--surface-elevated)] border-[var(--border)]"
       : "bg-[var(--surface-sunken)] border-[var(--border)]";
   const speaker = isUser ? "👤 you" : isDirector ? "👔 director" : "⚙️ system";
-  const isLiveProposal = m.type === "proposal" && decisionStillPending(db, m.decisionId);
+
+  // For proposals, the underlying decision's outcome is part of the bubble
+  // — buttons when pending, a closed-out badge when resolved. Keeps the
+  // proposal-and-its-result colocated instead of scrolling to find them.
+  const proposalOutcome =
+    m.type === "proposal" ? decisionOutcomeView(db, m.decisionId) : null;
+  const isLiveProposal = proposalOutcome?.outcome === "pending" && m.decisionId != null;
 
   return html`
     <div class="flex flex-col ${align} gap-1 w-full">
@@ -167,10 +188,57 @@ function renderMessage(db: Db, slug: string, m: DirectorMessage): TrustedHtml {
       </div>
       <div class="rounded-lg border ${bubbleColor} p-3 max-w-[min(42rem,90%)] text-sm shadow-sm">
         <div class="md-body">${m.body}</div>
-        ${isLiveProposal && m.decisionId ? renderProposalActions(slug, m.decisionId) : ""}
+        ${isLiveProposal && m.decisionId
+          ? renderProposalActions(slug, m.decisionId)
+          : proposalOutcome
+            ? renderProposalOutcome(proposalOutcome)
+            : ""}
       </div>
     </div>
   `;
+}
+
+function renderProposalOutcome(view: DecisionOutcomeView): TrustedHtml {
+  // After a proposal is resolved, show its final state inline so the user
+  // doesn't have to scroll for the corresponding report. Removes most of
+  // the post-approval chat noise.
+  switch (view.outcome) {
+    case "executed":
+      return html`<div
+        class="mt-3 pt-3 border-t border-[var(--border)] text-xs text-[var(--success)] flex items-center gap-2"
+      >
+        <span>✅ executed</span>
+        <span class="text-[var(--fg-muted)]">${view.outcomeDetails ?? ""}</span>
+      </div>`;
+    case "failed":
+      return html`<div
+        class="mt-3 pt-3 border-t border-[var(--border)] text-xs text-[var(--danger)] flex items-center gap-2"
+      >
+        <span>❌ failed</span>
+        <span class="text-[var(--fg-muted)]">${view.outcomeDetails ?? ""}</span>
+      </div>`;
+    case "rejected":
+      return html`<div
+        class="mt-3 pt-3 border-t border-[var(--border)] text-xs text-[var(--warning)] flex items-center gap-2"
+      >
+        <span>✗ rejected</span>
+        <span class="text-[var(--fg-muted)]">${view.outcomeDetails ?? ""}</span>
+      </div>`;
+    case "skipped":
+      return html`<div
+        class="mt-3 pt-3 border-t border-[var(--border)] text-xs text-[var(--fg-muted)]"
+      >
+        ⊘ skipped — ${view.outcomeDetails ?? ""}
+      </div>`;
+    case "dry_run":
+      return html`<div
+        class="mt-3 pt-3 border-t border-[var(--border)] text-xs text-[var(--fg-muted)]"
+      >
+        (dry_run — not executed)
+      </div>`;
+    default:
+      return raw("");
+  }
 }
 
 function renderNoiseGroup(msgs: DirectorMessage[]): TrustedHtml {
