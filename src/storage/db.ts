@@ -339,4 +339,20 @@ function applyMigrations(db: Db): void {
       "INSERT INTO schema_version (version, applied_at) VALUES (14, datetime('now'))",
     ).run();
   }
+
+  // v15 — Director decision dedup. payload_hash is a 16-char SHA-256
+  // prefix over a normalised canonical form of (decision_type, payload).
+  // recordDecision computes it on insert; an indexed lookup on
+  // (repo_id, payload_hash, outcome, ts) implements the 7-day duplicate
+  // gate with an actual index instead of a table scan.
+  if (current < 15) {
+    db.exec(`
+      ALTER TABLE director_decisions ADD COLUMN payload_hash TEXT;
+      CREATE INDEX idx_director_decisions_dedup
+        ON director_decisions(repo_id, payload_hash, outcome, ts);
+    `);
+    db.prepare(
+      "INSERT INTO schema_version (version, applied_at) VALUES (15, datetime('now'))",
+    ).run();
+  }
 }

@@ -6,6 +6,7 @@
 
 import type { Db } from "../storage/db.js";
 import type { Decision, DecisionOutcome, DecisionType, NewDecision } from "./types.js";
+import { findRecentDuplicate, hashPayload } from "./dedup.js";
 
 type DecisionRow = {
   id: number;
@@ -20,6 +21,7 @@ type DecisionRow = {
   outcome_ts: string | null;
   outcome_details: string | null;
   cost_usd: number;
+  payload_hash: string | null;
 };
 
 function rowToDecision(row: DecisionRow): Decision {
@@ -39,13 +41,32 @@ function rowToDecision(row: DecisionRow): Decision {
   };
 }
 
+// Compute a stable hash over (decision_type, payload) and check whether a
+// recent decision (last 7 days, outcome ∈ {pending, executed}) carries the
+// same hash. Returns the duplicate's id if found, else null. Exposed here
+// (not just inside recordDecision) so callers can decide what to do —
+// the tick loop downgrades a duplicate to outcome=skipped instead of
+// inserting it. no_op / ask_user always return null (hash undefined).
+export function checkForDuplicate(
+  db: Db,
+  repoId: number,
+  decisionType: string,
+  payload: unknown,
+): { hash: string | null; duplicateOf: number | null } {
+  const hash = hashPayload(decisionType, payload);
+  if (!hash) return { hash: null, duplicateOf: null };
+  const duplicateOf = findRecentDuplicate(db, repoId, hash);
+  return { hash, duplicateOf };
+}
+
 export function recordDecision(db: Db, d: NewDecision): Decision {
+  const hash = hashPayload(d.decisionType, d.payload);
   const row = db
     .prepare(
       `INSERT INTO director_decisions
          (repo_id, decision_type, rationale, charter_version,
-          state_snapshot, payload, outcome, cost_usd)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          state_snapshot, payload, outcome, cost_usd, payload_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        RETURNING *`,
     )
     .get(
@@ -57,6 +78,7 @@ export function recordDecision(db: Db, d: NewDecision): Decision {
       d.payload ? JSON.stringify(d.payload) : null,
       d.outcome ?? "pending",
       d.costUsd ?? 0,
+      hash,
     ) as DecisionRow;
   return rowToDecision(row);
 }

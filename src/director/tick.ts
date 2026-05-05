@@ -33,7 +33,7 @@ import {
   resetFailureStreak,
   rolloverDayIfNeeded,
 } from "./budget.js";
-import { recordDecision } from "./decisions.js";
+import { checkForDuplicate, recordDecision, setDecisionOutcome } from "./decisions.js";
 import { captureStateSnapshot } from "./state.js";
 import { composePrompt } from "./prompt.js";
 import { recalibrateBudget, shouldRecalibrateToday } from "./retrospective.js";
@@ -392,6 +392,14 @@ function recordTickDecisions(
   for (const d of args.tick.decisions) {
     const slice = each + remainder;
     remainder = 0; // only first row gets the leftover
+    const payload = "payload" in d ? d.payload : null;
+
+    // Dedup gate: if we already have a pending or executed decision in
+    // the last 7 days with the same canonicalised payload, record this
+    // one as 'skipped' with a duplicate-of pointer. Stops the LLM from
+    // re-proposing the same create_issue every other tick when its
+    // state-snapshot lags behind reality.
+    const dup = checkForDuplicate(db, args.repoId, d.type, payload);
     const row = recordDecision(db, {
       repoId: args.repoId,
       decisionType: d.type as DecisionType,
@@ -402,12 +410,23 @@ function recordTickDecisions(
         reasoning: args.tick.reasoning,
         priorityId: "priority_id" in d ? d.priority_id : undefined,
       },
-      payload: "payload" in d ? d.payload : null,
+      payload,
       // Always pending at record time. The executor flips it to its final
       // outcome (executed / pending-with-proposal / dry_run / failed / skipped).
       outcome: "pending",
       costUsd: slice,
     });
+    if (dup.duplicateOf !== null) {
+      // Mark the just-inserted row as a skipped duplicate. We still keep
+      // the audit-trail record; the executor never sees it.
+      setDecisionOutcome(
+        db,
+        row.id,
+        "skipped",
+        `duplicate of decision #${dup.duplicateOf} (within ${7}d, same canonical payload)`,
+      );
+      continue; // don't return it to executor
+    }
     out.push({ id: row.id, decision: d });
   }
   return out;
