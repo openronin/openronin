@@ -65,7 +65,13 @@ export function evaluateTrustRamp(
     if (next === undefined) {
       return { kind: "hold", reason: `already at ${currentMode} (cannot promote further)` };
     }
-    return { kind: "promote", from: currentMode, to: next, rate: sample.successRate, sampleSize: counted };
+    return {
+      kind: "promote",
+      from: currentMode,
+      to: next,
+      rate: sample.successRate,
+      sampleSize: counted,
+    };
   }
 
   if (sample.successRate <= DEMOTE_THRESHOLD && counted >= DEMOTE_MIN_SAMPLE) {
@@ -73,7 +79,13 @@ export function evaluateTrustRamp(
     if (next === undefined) {
       return { kind: "hold", reason: `already at ${currentMode} (cannot demote further)` };
     }
-    return { kind: "demote", from: currentMode, to: next, rate: sample.successRate, sampleSize: counted };
+    return {
+      kind: "demote",
+      from: currentMode,
+      to: next,
+      rate: sample.successRate,
+      sampleSize: counted,
+    };
   }
 
   return {
@@ -103,7 +115,8 @@ export function trustRampOnCooldown(db: Db, repoId: number): boolean {
 function suggestionBody(suggestion: TrustRampSuggestion, language: string): string {
   if (suggestion.kind === "hold") return ""; // never posted
   const ru = language.toLowerCase().includes("russian") || language.toLowerCase().includes("рус");
-  const verb = suggestion.kind === "promote" ? (ru ? "повысить" : "promote") : (ru ? "понизить" : "demote");
+  const verb =
+    suggestion.kind === "promote" ? (ru ? "повысить" : "promote") : ru ? "понизить" : "demote";
   const ratePct = (suggestion.rate * 100).toFixed(0);
   if (ru) {
     return [
