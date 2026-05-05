@@ -52,6 +52,19 @@ type RepoEntry = {
   hasCharter: boolean;
 };
 
+// Resolve the persona display name for a repo. Charter is optional and
+// the persona block within it is also optional; fall back to a neutral
+// "Director" / 🥷 pair when nothing is configured. Used for both the
+// chat-bubble label and the empty-state copy.
+function resolvePersonaName(repo: RepoConfig | undefined): string {
+  const name = repo?.director?.charter?.persona?.name;
+  return name && name.trim().length > 0 ? name : "Director";
+}
+
+function resolvePersonaAvatar(repo: RepoConfig | undefined): string {
+  return repo?.director?.charter?.persona?.avatar ?? "🥷";
+}
+
 function listEntries(db: Db, getConfig: () => RuntimeConfig): RepoEntry[] {
   const config = getConfig();
   const idByKey = new Map<string, number>();
@@ -160,7 +173,13 @@ function decisionOutcomeView(db: Db, decisionId: number | null): DecisionOutcome
   return { outcome: row.outcome, outcomeDetails: row.outcome_details };
 }
 
-function renderMessage(db: Db, slug: string, m: DirectorMessage): TrustedHtml {
+function renderMessage(
+  db: Db,
+  slug: string,
+  m: DirectorMessage,
+  personaName: string,
+  personaAvatar: string,
+): TrustedHtml {
   const isUser = m.role === "user";
   const isDirector = m.role === "director";
   // Visual slots: director on the left, user on the right, system small.
@@ -170,7 +189,7 @@ function renderMessage(db: Db, slug: string, m: DirectorMessage): TrustedHtml {
     : isDirector
       ? "bg-[var(--surface-elevated)] border-[var(--border)]"
       : "bg-[var(--surface-sunken)] border-[var(--border)]";
-  const speaker = isUser ? "👤 you" : isDirector ? "👔 director" : "⚙️ system";
+  const speaker = isUser ? "👤 you" : isDirector ? `${personaAvatar} ${personaName}` : "⚙️ system";
 
   // For proposals, the underlying decision's outcome is part of the bubble
   // — buttons when pending, a closed-out badge when resolved. Keeps the
@@ -430,7 +449,13 @@ function renderComposer(slug: string): TrustedHtml {
   `;
 }
 
-function renderChatThread(db: Db, slug: string, messages: DirectorMessage[]): TrustedHtml {
+function renderChatThread(
+  db: Db,
+  slug: string,
+  messages: DirectorMessage[],
+  personaName: string,
+  personaAvatar: string,
+): TrustedHtml {
   // messages comes ordered ascending by id (oldest first) — render top→bottom.
   const items = groupNoise(messages);
   return html`
@@ -441,10 +466,12 @@ function renderChatThread(db: Db, slug: string, messages: DirectorMessage[]): Tr
       >
         ${messages.length === 0
           ? html`<p class="text-sm text-[var(--fg-muted)] text-center py-8">
-              Empty thread. The director will start posting here on its next tick.
+              Empty thread. ${personaName} will start posting here on its next tick.
             </p>`
           : items.map((it) =>
-              it.kind === "msg" ? renderMessage(db, slug, it.m) : renderNoiseGroup(it.msgs),
+              it.kind === "msg"
+                ? renderMessage(db, slug, it.m, personaName, personaAvatar)
+                : renderNoiseGroup(it.msgs),
             )}
       </div>
       ${renderComposer(slug)}
@@ -607,6 +634,8 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     const charter = latestCharterVersion(db, entry.repoId);
     const budgetState = ensureBudgetState(db, entry.repoId, repo.director.budget);
     const gate = checkBudgetGate(budgetState, repo.director.budget);
+    const personaName = resolvePersonaName(repo);
+    const personaAvatar = resolvePersonaAvatar(repo);
 
     const charterCard = card({
       title: `Charter${charter ? ` (v${charter.version})` : ""}`,
@@ -706,7 +735,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     const chatCard = card({
       title: `Chat — ${messages.length} message(s)`,
       body: html`<div class="flex flex-col gap-3">
-        ${statusPanel} ${renderChatThread(db, slug, messages)}
+        ${statusPanel} ${renderChatThread(db, slug, messages, personaName, personaAvatar)}
       </div>`,
     });
 
@@ -783,6 +812,9 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     const entry = entries.find((e) => e.slug === slug);
     if (!entry) return c.notFound();
 
+    const config = getConfig();
+    const repo = config.repos.find((r) => repoKey(r) === slug);
+
     const form = await c.req.parseBody();
     const type = String(form.type ?? "directive");
     const body = String(form.body ?? "").trim();
@@ -800,7 +832,10 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     });
 
     const messages = recentMessages(db, entry.repoId, 200);
-    return c.html(renderChatThread(db, slug, messages).value);
+    return c.html(
+      renderChatThread(db, slug, messages, resolvePersonaName(repo), resolvePersonaAvatar(repo))
+        .value,
+    );
   });
 
   // ── POST /:slug/decisions/:id/approve ────────────────────────────────
@@ -825,7 +860,10 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     });
 
     const messages = recentMessages(db, entry.repoId, 200);
-    return c.html(renderChatThread(db, slug, messages).value);
+    return c.html(
+      renderChatThread(db, slug, messages, resolvePersonaName(repo), resolvePersonaAvatar(repo))
+        .value,
+    );
   });
 
   // ── POST /:slug/decisions/:id/reject ─────────────────────────────────
@@ -852,7 +890,10 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     });
 
     const messages = recentMessages(db, entry.repoId, 200);
-    return c.html(renderChatThread(db, slug, messages).value);
+    return c.html(
+      renderChatThread(db, slug, messages, resolvePersonaName(repo), resolvePersonaAvatar(repo))
+        .value,
+    );
   });
 
   // ── GET /:slug/status — render just the status panel ──────────────
