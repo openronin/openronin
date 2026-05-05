@@ -38,6 +38,12 @@ A 12-PR sweep that grew out of an audit looking at how the Director feels to ope
 - **Fast shutdown.** Service loop `sleep` splits into 250ms slices and checks `stopping`. Telegram bridge owns an `AbortController` that wraps every `getUpdates` long-poll; `stop()` aborts mid-flight. Captured `watchConfig` cleanup is now called on exit. Final `process.exit(0)` belt-and-braces against any lingering `AbortSignal.timeout` keepalive. End-to-end shutdown drops from ~120s → <1s typical.
 - **Digest engine model.** `runDigest` was passing `model: ""` to `engine.run`; MIMO rejected with `400 Not supported model`. Now reads `engine.defaultModel`.
 
+**Tail items — close the audit roadmap**
+
+- **Stale-task self-heal.** Worker + reconcile got an `isVcs404` predicate. A 404 from the VCS (typically after a repo rename / fork) marks the task with a year-long retry delay so the scheduler effectively forgets it — earlier in the day production was producing ~10 GET /pulls/.../reviews 404s/min on issues left over from the openronin/openronin rename until manually patched. Reconcile flips the matching `pr_branches.status` to `'closed'` so the dashboard reflects reality. Terminal errors only — non-404s keep their normal short retry.
+- **Per-decision trace UI.** Schema v18 grows seven new columns on `director_decisions` (`prompt_text`, `response_text`, `tokens_in`, `tokens_out`, `duration_ms`, `engine_id`, `model`). `runTick` stamps every decision in a tick with the SAME prompt/response (one LLM call → all rows share it). New `/admin/director/:slug/decisions/:id` page renders outcome timeline + payload + state snapshot + collapsible full prompt + raw LLM response. Linked from the recent-decisions table via a clickable `#N` column. Manual decisions leave the trace columns null.
+- **Outcome follow-up.** Schema v19 adds `director_outcome_followups`. Once-per-hour-per-repo sweep polls VCS for the resulting state of recent executed `create_issue` decisions in a 14-day window, capped at 5 per pass, throttled to 6h between observations of the same decision. Records `issue_open` / `issue_merged_via_pr` (state_reason=completed) / `issue_closed_no_pr` (won't-fix) / `issue_pr_open` / `fetch_error`. Surfaced as a timeline card on the per-decision trace UI with deep links into VCS. `VcsItem` grows an optional `stateReason` field; `mapIssue` propagates GitHub's `state_reason`. Doesn't yet feed into the adaptive-budget retrospective — documented as future work.
+
 `docs/DIRECTOR.md` rewritten to reflect everything above.
 
 
