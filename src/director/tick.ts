@@ -37,6 +37,9 @@ import { recordDecision } from "./decisions.js";
 import { captureStateSnapshot } from "./state.js";
 import { composePrompt } from "./prompt.js";
 import { parseTickOutput, type ParsedDecision, type TickOutput } from "./decision-schema.js";
+import { executeDecision } from "./executor.js";
+import { GithubVcsProvider } from "../providers/github.js";
+import type { VcsProvider } from "../providers/vcs.js";
 import type { DecisionType, DirectorConfig } from "./types.js";
 import YAML from "yaml";
 
@@ -52,6 +55,10 @@ export type TickRunOptions = {
   dataDir: string;
   // Engine factory (overridable for tests).
   engineFactory?: () => Engine;
+  // VcsProvider factory (overridable for tests). Defaults to GithubVcsProvider
+  // for github-provider repos. Constructed lazily — only if at least one
+  // decision actually needs VCS access (saves an env-var check on dry_run).
+  vcsFactory?: (repo: RepoConfig) => VcsProvider;
 };
 
 export type TickRunResult = {
@@ -169,14 +176,19 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
   }
 
   const tick = parsed.value;
-  const decisionIds = recordTickDecisions(db, {
+
+  // 1. Persist all decisions first with outcome=pending so the audit trail
+  //    is complete even if execution crashes. Cost is split across rows.
+  const recorded = recordTickDecisions(db, {
     repoId,
     tick,
     charterVersion,
-    mode: director.mode,
     cost,
   });
 
+  // 2. Post the LLM's observations + reasoning + decision summary to chat
+  //    BEFORE executing. The status message is what the human reads first;
+  //    proposal-type messages from execute step are interleaved after.
   appendMessage(db, {
     repoId,
     role: "director",
@@ -186,7 +198,7 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
       repo: repoKey(repo),
       mode: director.mode,
       charterVersion,
-      decisionIds,
+      decisionIds: recorded.map((r) => r.id),
       costUsd: cost,
       tokensIn: llmResult.usage.tokensIn,
       tokensOut: llmResult.usage.tokensOut,
@@ -194,16 +206,61 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
     },
   });
 
+  // 3. Execute each decision through the executor. Mode + authority gates
+  //    inside executor.ts decide whether each one runs, queues for approval,
+  //    or is skipped. The VcsProvider is constructed lazily — only when an
+  //    executor actually reaches a VCS call (dry_run, propose, and the
+  //    ask_user/no_op/amend_charter cases never need VCS).
+  let vcs: VcsProvider | null = null;
+  const getVcs = (): VcsProvider => {
+    if (vcs) return vcs;
+    vcs = opts.vcsFactory ? opts.vcsFactory(repo) : defaultVcsFactory(repo);
+    return vcs;
+  };
+  let executed = 0;
+  let pending = 0;
+  let failed = 0;
+  let skipped = 0;
+  for (const r of recorded) {
+    const result = await executeDecision({
+      db,
+      decisionId: r.id,
+      repoId,
+      repo,
+      director,
+      decision: r.decision,
+      getVcs,
+      charterVersion,
+    });
+    if (result.outcome === "executed") executed++;
+    else if (result.outcome === "pending") pending++;
+    else if (result.outcome === "failed") failed++;
+    else if (result.outcome === "skipped") skipped++;
+  }
+
   markTick(db, repoId);
   // Successful tick clears any prior failure streak — next failure starts
   // counting fresh, so a run of intermittent errors doesn't permanently
   // pause the director after the first 3 transient hiccups.
+  // We treat per-decision execution failures separately (they're surfaced
+  // as outcome=failed) so a single broken comment on a 5-decision tick
+  // doesn't trip the streak.
   resetFailureStreak(db, repoId);
+
+  const summary = [
+    `${recorded.length} decision(s)`,
+    executed > 0 ? `${executed} executed` : null,
+    pending > 0 ? `${pending} pending` : null,
+    skipped > 0 ? `${skipped} skipped` : null,
+    failed > 0 ? `${failed} failed` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return {
     status: "ok",
-    detail: `${tick.decisions.length} decision(s)`,
-    decisionsLogged: decisionIds.length,
+    detail: summary,
+    decisionsLogged: recorded.length,
     costUsd: cost,
   };
 }
@@ -244,17 +301,36 @@ export function selectThinkEngine(): { engine: Engine; model: string } {
   throw new Error("no LLM API key found (ANTHROPIC_API_KEY or XIAOMI_MIMO_API_KEY required)");
 }
 
+function defaultVcsFactory(repo: RepoConfig): VcsProvider {
+  switch (repo.provider) {
+    case "github":
+      return new GithubVcsProvider();
+    case "gitlab":
+      // We could lazy-import GitlabVcsProvider here once the director needs
+      // it. For now, the director is enabled only on github repos in
+      // production; tests inject vcsFactory directly.
+      throw new Error(
+        "default VcsProvider for gitlab not wired into director yet — pass vcsFactory in TickRunOptions or use github provider",
+      );
+    case "gitea":
+      throw new Error("director does not yet support the gitea provider");
+  }
+}
+
+// Recorded result we hand to the executor: the decision (so the executor can
+// dispatch on type) plus the freshly-allocated id (so it can update outcome).
+type RecordedDecision = { id: number; decision: ParsedDecision };
+
 function recordTickDecisions(
   db: Db,
   args: {
     repoId: number;
     tick: TickOutput;
     charterVersion: number;
-    mode: DirectorConfig["mode"];
     cost: number;
   },
-): number[] {
-  const ids: number[] = [];
+): RecordedDecision[] {
+  const out: RecordedDecision[] = [];
   // Spread think cost across decisions for a rough per-decision audit, but
   // round-down rest goes to first row to keep the sum exactly equal.
   const n = args.tick.decisions.length;
@@ -263,41 +339,25 @@ function recordTickDecisions(
   for (const d of args.tick.decisions) {
     const slice = each + remainder;
     remainder = 0; // only first row gets the leftover
-    ids.push(
-      recordDirectorDecision(db, args.repoId, args.charterVersion, args.mode, d, args.tick, slice)
-        .id,
-    );
+    const row = recordDecision(db, {
+      repoId: args.repoId,
+      decisionType: d.type as DecisionType,
+      rationale: d.rationale,
+      charterVersion: args.charterVersion,
+      stateSnapshot: {
+        observations: args.tick.observations,
+        reasoning: args.tick.reasoning,
+        priorityId: "priority_id" in d ? d.priority_id : undefined,
+      },
+      payload: "payload" in d ? d.payload : null,
+      // Always pending at record time. The executor flips it to its final
+      // outcome (executed / pending-with-proposal / dry_run / failed / skipped).
+      outcome: "pending",
+      costUsd: slice,
+    });
+    out.push({ id: row.id, decision: d });
   }
-  return ids;
-}
-
-function recordDirectorDecision(
-  db: Db,
-  repoId: number,
-  charterVersion: number,
-  mode: DirectorConfig["mode"],
-  d: ParsedDecision,
-  tick: TickOutput,
-  costUsd: number,
-) {
-  // In dry_run we never execute. In other modes execution is gated and
-  // implemented in PR #23 — until then, the safe behaviour is to mark
-  // pending and let the human review.
-  const outcome = mode === "dry_run" ? "dry_run" : "pending";
-  return recordDecision(db, {
-    repoId,
-    decisionType: d.type as DecisionType,
-    rationale: d.rationale,
-    charterVersion,
-    stateSnapshot: {
-      observations: tick.observations,
-      reasoning: tick.reasoning,
-      priorityId: "priority_id" in d ? d.priority_id : undefined,
-    },
-    payload: "payload" in d ? d.payload : null,
-    outcome,
-    costUsd,
-  });
+  return out;
 }
 
 function renderChatPost(
