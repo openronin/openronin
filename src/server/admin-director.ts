@@ -189,11 +189,7 @@ function renderMessage(
     : isDirector
       ? "bg-[var(--surface-elevated)] border-[var(--border)]"
       : "bg-[var(--surface-sunken)] border-[var(--border)]";
-  const speaker = isUser
-    ? "👤 you"
-    : isDirector
-      ? `${personaAvatar} ${personaName}`
-      : "⚙️ system";
+  const speaker = isUser ? "👤 you" : isDirector ? `${personaAvatar} ${personaName}` : "⚙️ system";
 
   // For proposals, the underlying decision's outcome is part of the bubble
   // — buttons when pending, a closed-out badge when resolved. Keeps the

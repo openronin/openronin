@@ -67,9 +67,7 @@ export const PersonaSchema = z
   .object({
     name: z.string().min(1).default("Director"),
     role: z.string().default("product owner / project manager"),
-    voice: z
-      .string()
-      .default("concise, direct, friendly but professional; admits uncertainty"),
+    voice: z.string().default("concise, direct, friendly but professional; admits uncertainty"),
     style: z
       .string()
       .default(
