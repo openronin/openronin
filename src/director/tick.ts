@@ -247,8 +247,8 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
     trace: {
       promptText: `# system\n\n${prompt.systemPrompt}\n\n# user\n\n${prompt.userPrompt}`,
       responseText: llmResult.content,
-      tokensIn: llmResult.usage.tokensIn,
-      tokensOut: llmResult.usage.tokensOut,
+      tokensIn: llmResult.usage.tokensIn ?? 0,
+      tokensOut: llmResult.usage.tokensOut ?? 0,
       durationMs: llmResult.durationMs,
       engineId: engine.id,
       model,
