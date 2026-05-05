@@ -152,11 +152,15 @@ export async function runDigest(opts: DigestRunOptions): Promise<DigestRunResult
   const engine = opts.engineFactory();
   let llmResult;
   try {
+    // engine.run requires a non-empty model name on most providers — passing
+    // "" sends an empty `model` field to MIMO which rejects it as
+    // "Not supported model". Use the engine's defaultModel so the call
+    // honours whatever the factory was configured with.
     llmResult = await engine.run({
       systemPrompt,
       userPrompt,
       timeoutMs: DIGEST_TIMEOUT_MS,
-      model: "",
+      model: engine.defaultModel,
       expectJson: false,
     });
   } catch (err) {
