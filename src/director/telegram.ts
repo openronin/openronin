@@ -32,10 +32,7 @@ import type { Db } from "../storage/db.js";
 import type { RuntimeConfig } from "../config/schema.js";
 import { repoKey, type RepoConfig } from "../config/schema.js";
 import { appendMessage } from "./chat.js";
-import {
-  approveDecision,
-  rejectDecision,
-} from "./executor.js";
+import { approveDecision, rejectDecision } from "./executor.js";
 import { ensureBudgetState, pause as pauseRepo, unpause as unpauseRepo } from "./budget.js";
 import { pendingDecisions, getDecisionById } from "./decisions.js";
 import { GithubVcsProvider } from "../providers/github.js";
