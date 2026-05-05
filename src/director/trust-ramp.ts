@@ -27,10 +27,14 @@ const DEMOTE_THRESHOLD = 0.4;
 const DEMOTE_MIN_SAMPLE = 10;
 const TRUST_RAMP_COOLDOWN_DAYS = 7;
 
-export type TrustRampSuggestion =
-  | { kind: "promote"; from: DirectorMode; to: DirectorMode; rate: number; sampleSize: number }
-  | { kind: "demote"; from: DirectorMode; to: DirectorMode; rate: number; sampleSize: number }
-  | { kind: "hold"; reason: string };
+export type TrustRampMove = {
+  kind: "promote" | "demote";
+  from: DirectorMode;
+  to: DirectorMode;
+  rate: number;
+  sampleSize: number;
+};
+export type TrustRampSuggestion = TrustRampMove | { kind: "hold"; reason: string };
 
 const PROMOTE_NEXT: Partial<Record<DirectorMode, DirectorMode>> = {
   dry_run: "propose",
@@ -127,7 +131,7 @@ export function maybePostTrustRampSuggestion(
   repoId: number,
   currentMode: DirectorMode,
   language: string,
-): TrustRampSuggestion | null {
+): TrustRampMove | null {
   if (trustRampOnCooldown(db, repoId)) return null;
   const suggestion = evaluateTrustRamp(db, repoId, currentMode);
   if (suggestion.kind === "hold") return null;
