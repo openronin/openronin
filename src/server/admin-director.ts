@@ -37,6 +37,7 @@ import { approveDecision, rejectDecision } from "../director/executor.js";
 import { getActiveTick } from "../director/active-tick.js";
 import { getDecisionById, pendingDecisions } from "../director/decisions.js";
 import { deleteNote, listNotes, recordNote } from "../director/notes.js";
+import { followupsForDecision, summariseFollowup } from "../director/outcome-followup.js";
 import { parseSlashCommand, runSlashCommand } from "./slash-commands.js";
 import { GithubVcsProvider } from "../providers/github.js";
 import type { VcsProvider } from "../providers/vcs.js";
@@ -1430,9 +1431,43 @@ ${decision.responseText}</pre
         })
       : "";
 
+    const followups = followupsForDecision(db, decision.id);
+    const followupCard =
+      followups.length > 0
+        ? card({
+            title: `Outcome follow-up — ${followups.length} observation(s)`,
+            body: html`
+              <ul class="flex flex-col gap-1 text-sm">
+                ${followups.map(
+                  (f) => html`
+                    <li
+                      class="flex items-center gap-2 p-2 border border-[var(--border)] rounded text-xs"
+                    >
+                      <span class="text-[var(--fg-muted)]">${time(f.observedAt)}</span>
+                      <span class="font-medium">${summariseFollowup(f)}</span>
+                      ${f.refUrl
+                        ? html` <a
+                            class="text-[var(--brand-primary)] hover:underline ml-auto"
+                            href="${f.refUrl}"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            >open ↗</a
+                          >`
+                        : ""}
+                    </li>
+                  `,
+                )}
+              </ul>
+              <p class="text-xs text-[var(--fg-muted)] mt-2">
+                Sweeper polls each executed create_issue once an hour for up to 14 days.
+              </p>
+            `,
+          })
+        : "";
+
     const body = html`
       <div class="flex flex-col gap-4">
-        ${traceCard} ${payloadCard} ${stateCard} ${promptCard} ${responseCard}
+        ${traceCard} ${followupCard} ${payloadCard} ${stateCard} ${promptCard} ${responseCard}
       </div>
     `;
     return c.html(

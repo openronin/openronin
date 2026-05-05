@@ -11,6 +11,10 @@ export interface VcsItem {
   author: string;
   authorAssociation: string;
   state: "open" | "closed";
+  // GitHub's `state_reason` for closed issues: "completed" (typically
+  // closed by a merged PR) vs "not_planned" / "duplicate". Optional so
+  // providers without this field can leave it undefined.
+  stateReason?: "completed" | "not_planned" | "reopened" | "duplicate" | string;
   labels: string[];
   createdAt: string;
   updatedAt: string;

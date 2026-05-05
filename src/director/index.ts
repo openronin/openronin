@@ -22,6 +22,8 @@ import { releaseTick, tryAcquireTick } from "./active-tick.js";
 import { getLastDigestDate, runDigest, shouldRunDigest } from "./digest.js";
 import { maybePostTrustRampSuggestion } from "./trust-ramp.js";
 import { expireStalePending } from "./decisions.js";
+import { runOutcomeFollowupSweep } from "./outcome-followup.js";
+import { GithubVcsProvider } from "../providers/github.js";
 import { MimoEngine } from "../engines/mimo.js";
 import type { DirectorConfig } from "./types.js";
 
@@ -29,6 +31,12 @@ import type { DirectorConfig } from "./types.js";
 // in <30s in the typical case, loose enough that an idle director burns
 // almost no CPU. Cadence-based scheduled ticks (6h+) are cheap to check.
 const SERVICE_LOOP_INTERVAL_MS = 10_000;
+
+// Outcome follow-up runs once per hour per repo. Throttled in-process via
+// this Map — keyed by repoId, value is the last sweep timestamp. Survives
+// across loop iterations because the module-level binding outlives them.
+const FOLLOWUP_INTERVAL_MS = 60 * 60 * 1000;
+const lastFollowupAt = new Map<number, number>();
 const KILL_SWITCH_ENV = "OPENRONIN_DIRECTOR_DISABLED";
 
 type RepoLookup = {
@@ -213,6 +221,34 @@ async function loopOnce(db: Db, config: RuntimeConfig): Promise<void> {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(`[director] digest error on ${repoKey(t.repo)}:`, err);
+    }
+    if (stopping) return;
+    // Outcome follow-up — once per hour per repo, polls VCS for the
+    // resulting state of recent executed create_issue decisions. Cheap
+    // when there's nothing to observe; capped at 5 decisions per sweep
+    // when there is. Surfaced on the per-decision trace UI.
+    try {
+      const last = lastFollowupAt.get(t.repoId) ?? 0;
+      if (Date.now() - last >= FOLLOWUP_INTERVAL_MS) {
+        lastFollowupAt.set(t.repoId, Date.now());
+        const result = await runOutcomeFollowupSweep(
+          db,
+          t.repoId,
+          t.repo.owner,
+          t.repo.name,
+          new GithubVcsProvider(),
+        );
+        if (result.observed > 0 || result.errored > 0) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[director] follow-up sweep on ${repoKey(t.repo)}: ` +
+              `${result.observed} observed, ${result.errored} errored`,
+          );
+        }
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[director] follow-up sweep error on ${repoKey(t.repo)}:`, err);
     }
     if (stopping) return;
     // Trust ramp check is cheap (one SQL aggregate + one cooldown lookup);
