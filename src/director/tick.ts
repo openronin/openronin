@@ -154,10 +154,15 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
 
   let engine: Engine;
   let model: string;
+  // Prefer the cheap engine for reactive (chat-driven) ticks. Scheduled
+  // cadence ticks still pull Sonnet because they may produce a tick's
+  // worth of careful planning decisions. user_message is roughly 10x
+  // cheaper on MIMO and reacts faster, which is what chat needs.
+  const preferCheap = reason === "user_message";
   try {
     ({ engine, model } = opts.engineFactory
       ? { engine: opts.engineFactory(), model: process.env.OPENRONIN_DIRECTOR_THINK_MODEL ?? "" }
-      : selectThinkEngine());
+      : selectThinkEngine({ preferCheap }));
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     appendMessage(db, {
@@ -328,7 +333,15 @@ export async function runTick(opts: TickRunOptions): Promise<TickRunResult> {
 // are engine-specific. MIMO's quality is lower than Sonnet but its JSON-mode
 // is solid and the cost is ~10x cheaper, so it's a fine fallback for a
 // dry_run-mode director that's still being calibrated.
-export function selectThinkEngine(): { engine: Engine; model: string } {
+export function selectThinkEngine(
+  opts: {
+    // When the tick is reactive (user just wrote in chat) we prefer the
+    // cheap engine — chat replies don't need Sonnet's planning depth, and
+    // MIMO's response time is half. Scheduled cadence ticks (full planning
+    // round) still pull the heavy engine.
+    preferCheap?: boolean;
+  } = {},
+): { engine: Engine; model: string } {
   const override = (process.env.OPENRONIN_DIRECTOR_THINK_ENGINE ?? "").toLowerCase();
   const userModel = process.env.OPENRONIN_DIRECTOR_THINK_MODEL;
   const haveAnthropic = !!process.env.ANTHROPIC_API_KEY;
@@ -345,6 +358,16 @@ export function selectThinkEngine(): { engine: Engine; model: string } {
     return { engine: new MimoEngine({}), model: userModel ?? DEFAULT_MIMO_MODEL };
   }
 
+  // Reactive (chat-reply) ticks prefer MIMO if available; scheduled ticks
+  // prefer Anthropic. Fall through to the other side if the preferred
+  // engine isn't configured.
+  if (opts.preferCheap && haveMimo) {
+    // userModel only honoured for the heavy engine — MIMO has its own
+    // dedicated env (OPENRONIN_DIRECTOR_CHAT_MODEL) for the chat-reply
+    // path so an operator can pin chat to a different MIMO variant.
+    const chatModel = process.env.OPENRONIN_DIRECTOR_CHAT_MODEL ?? DEFAULT_MIMO_MODEL;
+    return { engine: new MimoEngine({}), model: chatModel };
+  }
   if (haveAnthropic) {
     return { engine: new AnthropicEngine({}), model: userModel ?? DEFAULT_ANTHROPIC_MODEL };
   }
