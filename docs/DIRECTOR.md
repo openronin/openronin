@@ -1,6 +1,6 @@
 # Director — autonomous PM layer
 
-> **Status:** in production. Schema v17. The five-PR foundation rollout was followed by a UX-focused audit (PRs #56–#66) that added persona/voice, reactive ticks, edit-before-approve, decision dedup, daily digest, stale watchdog, trust-ramp suggestions, an engine split for cheap chat replies, standing operator notes, slash commands in the admin chat, and operational polish (pending-proposal expiry, transient-error retry, charter diff in chat, syntax-highlighted code in markdown). The director is running in `propose` mode on `openronin/openronin` and idle on other watched repos (no charter).
+> **Status:** in production. Schema v19. The five-PR foundation rollout was followed by a UX-focused audit (PRs #56–#76) that added persona/voice, reactive ticks, edit-before-approve, decision dedup, daily digest, stale watchdog, trust-ramp suggestions, an engine split for cheap chat replies, standing operator notes, slash commands, bulk approve, operational polish (pending-proposal expiry, transient-error retry, charter diff, syntax-highlighted code), per-decision trace UI, and outcome follow-up. The director is running in `propose` mode on `openronin/openronin` and idle on other watched repos (no charter).
 
 The Director is a separate systemd service (`openronin-director.service`) that runs alongside the main openronin daemon. It shares the same code, database, and `OPENRONIN_DATA_DIR` but plays a different role: where the main daemon **reacts** to events (issue created, PR comment, push), the Director **proactively** decides what the project should work on next.
 
@@ -236,6 +236,25 @@ The Telegram bridge has the same set plus `/repos`, `/pending`, `/approve <id>`,
 - **Charter diff in chat.** When the YAML is updated and a new charter version is captured, the loop posts a brief diff summary (added/removed priorities, weight changes, persona renames) to the chat. v1 is silent; v(N+1) where N≥1 produces the note.
 - **Syntax highlight.** `highlight.js` in the admin layout colours code-fences in chat markdown.
 - **Atomic migrations.** All schema migrations run inside a single `BEGIN IMMEDIATE` transaction so two services racing on startup serialise cleanly. Earlier in development this was the source of nasty "table already exists" / "duplicate column" crashes on deploy.
+- **Stale-task self-heal.** A 404 from the VCS on an issue/PR fetch (typically after a repo rename) marks the task with a year-long retry delay so the scheduler stops polling it. Reconcile flips matching `pr_branches.status` to `'closed'` for the same reason.
+
+## Per-decision trace
+
+Click a decision's `#N` in the recent-decisions table on `/admin/director/<slug>` to open a trace page with the full prompt, raw LLM response (capped at 32 KB each, with a truncation marker), token counts, latency, model, and the state snapshot at decision time. `runTick` stamps every decision in a tick with the same prompt/response — one LLM call generates all rows.
+
+Manual operator-side approves leave the trace columns null. Schema v18 owns the new columns: `prompt_text`, `response_text`, `tokens_in`, `tokens_out`, `duration_ms`, `engine_id`, `model`.
+
+## Outcome follow-up
+
+`executed` is a snapshot — at the moment we ran the side-effect it looked successful. But did the issue we created actually get worked on, or did it sit stale? The follow-up sweeper (schema v19, `director_outcome_followups`) runs once per hour per repo, picks up to 5 recently-executed `create_issue` decisions in a 14-day window, polls VCS for each, and appends a row recording one of:
+
+- `issue_open` — still being worked on
+- `issue_merged_via_pr` — closed with `state_reason=completed` (the win signal)
+- `issue_closed_no_pr` — closed without resolution (won't-fix etc.)
+- `issue_pr_open` — tracked item is a PR
+- `fetch_error` — VCS call failed; recorded so we don't retry hot
+
+Same decision can have multiple observations over time. The trace page shows the timeline (most recent first) with deep links into VCS. The signal isn't yet wired into the adaptive-budget retrospective — that still uses immediate decision outcomes.
 
 ## Decisions audit trail
 
@@ -385,16 +404,16 @@ UX audit follow-up (Wave 1+2+3, all merged):
 
 - **Wave 1 — make the PM feel alive**: persona/voice (#56), reactive tick + per-repo lock (#57), edit-before-approve (#58), decision dedup (#59), daily morning digest (#60).
 - **Wave 2 — proactive PM**: stale watchdog (#61), trust-ramp suggestion (#62), engine split (#63), standing notes (#64), slash commands (#65).
-- **Wave 3 — operational polish**: pending expiry, transient retry, charter diff, syntax highlight (#66).
+- **Wave 3 — operational polish**: pending expiry, transient retry, charter diff, syntax highlight (#66); bulk approve (#72).
 - **Production stability**: atomic migrations (#67), fast shutdown (#68, #70), digest model fix (#69).
+- **Tail items**: stale-task self-heal (#74), per-decision trace UI (#75), outcome follow-up (#76).
 
 What's reasonable to add next:
 
-- **SSE realtime push.** Replace the 2s/10s status panel polling with EventSource so the chat refreshes the moment a tick completes. The current polling works but burns context every cycle.
-- **Bulk approve.** Checkboxes on proposal bubbles + a sticky "approve N selected" bar for repetitive batches.
-- **Per-decision trace UI.** Click a decision row in `/admin/director` → full prompt + response + cost + latency. Currently you have to query SQLite.
-- **Outcome retrospective.** Poll VCS post-merge for reverts / CI failures over a 7-day window; feed that into the adaptive budget instead of (or alongside) the immediate decision outcome.
+- **SSE realtime push.** Replace the 2s/10s status panel polling with EventSource so the chat refreshes the moment a tick completes. The current polling works but burns context every cycle. (Operator opted to defer.)
+- **Outcome retrospective wired into the budget.** The follow-up sweeper records the post-execute reality, but the adaptive-budget calculation still uses immediate decision outcomes. Switching to the follow-up signal would weight `issue_merged_via_pr` as a real win and `issue_closed_no_pr` as a soft loss.
 - **Cross-process event triggers.** When the main openronin service detects a `pr_event` or `deploy_failed`, write a signal row that the director loop reacts to in <60s. Currently the director sees these only on the next scheduled tick.
+- **Follow-up coverage for `merge_pr`.** Detect reverts within 7d and PR/CI flips. Schema is general enough to add this without a migration.
 - **Quality gates.** Per-PR metrics (lint score, coverage delta, bundle size) feeding into approve/merge decisions.
 - **Plugin lanes.** External lane providers via MCP / HTTP so users can add custom decision types without forking.
 - **Multi-tenant.** Several director instances on one host (different bot identities, different repos).
