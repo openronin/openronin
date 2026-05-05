@@ -122,6 +122,24 @@ export type BudgetState = {
   pauseReason: string | null;
 };
 
+// ── Daily digest config ─────────────────────────────────────────────────
+// Single morning report per repo. Independent from the planning cadence:
+// digest is cheap (MIMO), short, and never produces actionable decisions
+// — it's a scoped status update so the operator can triage at a glance.
+export const DigestConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    // Local hour of day (0–23) in the configured timezone. Default 9 ≈
+    // first-coffee. Operators in other timezones override.
+    hour: z.number().int().min(0).max(23).default(9),
+    // IANA timezone string, e.g. "Europe/Moscow", "America/Los_Angeles".
+    // Validated only at runtime via Intl.DateTimeFormat — bad values fall
+    // back to UTC silently.
+    timezone: z.string().default("UTC"),
+  })
+  .default({});
+export type DigestConfig = z.infer<typeof DigestConfigSchema>;
+
 // ── Director config (per-repo block, lives in repo YAML) ─────────────────
 export const DirectorConfigSchema = z
   .object({
@@ -141,6 +159,11 @@ export const DirectorConfigSchema = z
     charter: CharterSchema.optional(),
     budget: BudgetConfigSchema,
     authority: DirectorAuthoritySchema,
+    // Daily digest — once-per-day "good morning" status update so the
+    // operator wakes up to a punch list of overnight changes instead of
+    // having to scrape the chat. See director-digest.md for the prompt.
+    // Skipped silently when enabled=false or charter is missing.
+    digest: DigestConfigSchema,
   })
   .default({});
 export type DirectorConfig = z.infer<typeof DirectorConfigSchema>;

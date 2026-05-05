@@ -19,6 +19,8 @@ import { ensureBudgetState, rolloverDayIfNeeded } from "./budget.js";
 import { appendMessage, unansweredUserDirectives } from "./chat.js";
 import { runTick, type TickReason } from "./tick.js";
 import { releaseTick, tryAcquireTick } from "./active-tick.js";
+import { getLastDigestDate, runDigest, shouldRunDigest } from "./digest.js";
+import { MimoEngine } from "../engines/mimo.js";
 import type { DirectorConfig } from "./types.js";
 
 // Wake up every 10s — tight enough that a user chat message is reacted to
@@ -124,12 +126,56 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function maybeRunDigest(db: Db, target: RepoLookup, dataDir: string): Promise<void> {
+  // Digest fires at most once per local-TZ day per repo. shouldRunDigest is
+  // pure — it checks the configured hour against the current wall-clock in
+  // the configured TZ, plus the persisted last-digest-date string.
+  const last = getLastDigestDate(db, target.repoId);
+  if (!shouldRunDigest(target.director.digest, last)) return;
+  // Use the same per-repo lock as planning ticks so a digest doesn't
+  // race with a chat-triggered planning tick.
+  if (!tryAcquireTick(db, target.repoId, "morning_digest")) return;
+  try {
+    const result = await runDigest({
+      db,
+      repoId: target.repoId,
+      repo: target.repo,
+      digest: target.director.digest,
+      persona: target.director.charter?.persona,
+      language: target.director.language,
+      dataDir,
+      // Digest is intentionally cheap — MIMO only. Failing over to a
+      // pricier engine would defeat the point of the daily digest.
+      engineFactory: () =>
+        new MimoEngine({
+          defaultModel: process.env.OPENRONIN_DIRECTOR_DIGEST_MODEL ?? "mimo-v2.5-pro",
+        }),
+    });
+    // eslint-disable-next-line no-console
+    console.log(
+      `[director] digest on ${repoKey(target.repo)}: ${result.status} — ${result.detail} ` +
+        `($${result.costUsd.toFixed(4)})`,
+    );
+  } finally {
+    releaseTick(db, target.repoId);
+  }
+}
+
 async function loopOnce(db: Db, config: RuntimeConfig): Promise<void> {
   const targets = listDirectorEnabledRepos(db, config);
   for (const t of targets) {
     if (stopping) return;
     rolloverDayIfNeeded(db, t.repoId);
     const state = ensureBudgetState(db, t.repoId, t.director.budget);
+    // Digest runs out-of-band from the planning cadence — the user wants
+    // morning context every day, even if the planning cadence is 6h+.
+    try {
+      await maybeRunDigest(db, t, config.dataDir);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[director] digest error on ${repoKey(t.repo)}:`, err);
+    }
+    if (stopping) return;
     const reason = pickTickReason(db, t.repoId, state, t.director.cadence_hours);
     if (!reason) continue;
     try {
