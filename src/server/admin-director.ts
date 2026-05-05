@@ -35,7 +35,7 @@ import type { BudgetState } from "../director/types.js";
 import { latestCharterVersion } from "../director/charter.js";
 import { approveDecision, rejectDecision } from "../director/executor.js";
 import { getActiveTick } from "../director/active-tick.js";
-import { getDecisionById } from "../director/decisions.js";
+import { getDecisionById, pendingDecisions } from "../director/decisions.js";
 import { deleteNote, listNotes, recordNote } from "../director/notes.js";
 import { parseSlashCommand, runSlashCommand } from "./slash-commands.js";
 import { GithubVcsProvider } from "../providers/github.js";
@@ -613,6 +613,7 @@ function renderStatusPanel(
   // a brand-new repo and was effectively dead code.
   const active = getActiveTick(db, repoId);
   const isProcessing = active !== null;
+  const pendingCount = pendingDecisions(db, repoId).length;
 
   // Visual state.
   const stateLabel = isProcessing
@@ -653,14 +654,34 @@ function renderStatusPanel(
             })}
           </span>`
         : ""}
+      ${pendingCount > 0
+        ? html`<span class="text-xs">
+            ${badge({
+              label: `${pendingCount} pending`,
+              tone: "info",
+            })}
+          </span>`
+        : ""}
       <span class="ml-auto flex items-center gap-2">
+        ${pendingCount >= 2
+          ? html`<button
+              class="btn btn-success btn-sm"
+              hx-post="/admin/director/${slug}/decisions/approve-all"
+              hx-target="#chat-thread"
+              hx-swap="outerHTML"
+              hx-confirm="Approve and execute all ${pendingCount} pending decisions for this repo?"
+              title="Approve every pending proposal at once. Each runs through the same gating + executor as a one-by-one approve."
+            >
+              ✓ Approve all (${pendingCount})
+            </button>`
+          : ""}
         <button
           class="btn btn-primary btn-sm"
           hx-post="/admin/director/${slug}/tick-now"
           hx-target="#director-status"
           hx-swap="outerHTML"
           ${isProcessing ? "disabled" : ""}
-          title="Force the director to tick within the next 60s instead of waiting for the scheduled tick"
+          title="Force the director to tick within the next 10s instead of waiting for the scheduled tick"
         >
           ▶ Tick now
         </button>
@@ -1329,6 +1350,61 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       actor: "admin",
       getVcs: () => defaultVcsFactory(repo),
       overrides: overrides && Object.keys(overrides).length > 0 ? overrides : undefined,
+    });
+
+    const messages = recentMessages(db, entry.repoId, 200);
+    return c.html(
+      renderChatThread(db, slug, messages, resolvePersonaName(repo), resolvePersonaAvatar(repo))
+        .value,
+    );
+  });
+
+  // ── POST /:slug/decisions/approve-all ────────────────────────────────
+  // Bulk-approve every pending decision for a repo. Each runs through
+  // the same approveDecision path (authority gate, executor, audit log)
+  // as the one-at-a-time button — we just iterate. If anything fails
+  // mid-way the rest still attempt; failures land as outcome=failed
+  // with their detail in chat (visible after the swap).
+  app.post("/:slug/decisions/approve-all", async (c) => {
+    const slug = c.req.param("slug");
+    const entries = listEntries(db, getConfig);
+    const entry = entries.find((e) => e.slug === slug);
+    if (!entry) return c.notFound();
+
+    const config = getConfig();
+    const repo = config.repos.find((r) => repoKey(r) === slug);
+    if (!repo || !repo.director) return c.notFound();
+
+    const pending = pendingDecisions(db, entry.repoId);
+    let approved = 0;
+    for (const d of pending) {
+      try {
+        const r = await approveDecision({
+          db,
+          decisionId: d.id,
+          repo,
+          director: repo.director,
+          actor: "admin:bulk",
+          getVcs: () => defaultVcsFactory(repo),
+        });
+        if (r.ok) approved++;
+      } catch {
+        // approveDecision logs into the chat itself; skip and continue.
+      }
+    }
+
+    appendMessage(db, {
+      repoId: entry.repoId,
+      role: "system",
+      type: "tick_log",
+      body: `bulk approve: ${approved}/${pending.length} processed`,
+      metadata: {
+        repo: slug,
+        kind: "bulk_approve",
+        attempted: pending.length,
+        approved,
+        actor: "admin",
+      },
     });
 
     const messages = recentMessages(db, entry.repoId, 200);

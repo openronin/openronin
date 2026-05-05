@@ -13,6 +13,9 @@ import { appendMessage } from "../director/chat.js";
 import { ensureBudgetState, recordThinkSpend } from "../director/budget.js";
 import { runDigest } from "../director/digest.js";
 import { localDateInTz } from "../director/digest.js";
+import { pendingDecisions } from "../director/decisions.js";
+import { approveDecision } from "../director/executor.js";
+import { GithubVcsProvider } from "../providers/github.js";
 import type { RepoConfig } from "../config/schema.js";
 import { repoKey } from "../config/schema.js";
 import { MimoEngine } from "../engines/mimo.js";
@@ -27,6 +30,7 @@ export type SlashCommand =
   | { name: "resume"; args: string }
   | { name: "status"; args: string }
   | { name: "budget"; args: string }
+  | { name: "approve_all"; args: string }
   | { name: "help"; args: string };
 
 const KNOWN: SlashCommand["name"][] = [
@@ -36,17 +40,27 @@ const KNOWN: SlashCommand["name"][] = [
   "resume",
   "status",
   "budget",
+  "approve_all",
   "help",
 ];
+
+// Some commands have hyphenated aliases (`/approve-all`) that don't fit
+// the [a-z_]+ regex. Normalise here so the parser maps them to the
+// snake_case canonical name.
+const ALIASES: Record<string, SlashCommand["name"]> = {
+  "approve-all": "approve_all",
+  approveall: "approve_all",
+};
 
 // Returns the parsed command if `body` opens with a known `/cmd`, else null.
 // Whitespace-tolerant. Body may continue with arbitrary args after the cmd.
 export function parseSlashCommand(body: string): SlashCommand | null {
   const trimmed = body.trim();
   if (!trimmed.startsWith("/")) return null;
-  const m = trimmed.match(/^\/([a-z_]+)(\s+(.*))?$/iu);
+  const m = trimmed.match(/^\/([a-z_-]+)(\s+(.*))?$/iu);
   if (!m || !m[1]) return null;
-  const name = m[1].toLowerCase();
+  const raw = m[1].toLowerCase();
+  const name = (ALIASES[raw] ?? raw) as SlashCommand["name"];
   if (!(KNOWN as readonly string[]).includes(name)) return null;
   return { name, args: (m[3] ?? "").trim() } as SlashCommand;
 }
@@ -81,9 +95,38 @@ export async function runSlashCommand(opts: {
           "- `/resume` — resume after pause.",
           "- `/status` — show current mode, budget, last tick, pending count.",
           "- `/budget` — show budget caps + spend.",
+          "- `/approve-all` — approve every pending proposal at once.",
           "- `/help` — this list.",
         ].join("\n"),
       };
+    case "approve_all": {
+      if (!repo || !repo.director) {
+        return { echo: "repo or director config missing" };
+      }
+      const pending = pendingDecisions(db, repoId);
+      if (pending.length === 0) return { echo: "no pending decisions" };
+      let approved = 0;
+      let failed = 0;
+      for (const d of pending) {
+        try {
+          const r = await approveDecision({
+            db,
+            decisionId: d.id,
+            repo,
+            director: repo.director,
+            actor: "admin:slash",
+            getVcs: () => new GithubVcsProvider(),
+          });
+          if (r.ok && r.outcome === "executed") approved++;
+          else failed++;
+        } catch {
+          failed++;
+        }
+      }
+      return {
+        echo: `bulk approve via slash: ${approved}/${pending.length} executed, ${failed} failed/skipped`,
+      };
+    }
     case "tick":
       db.prepare(`UPDATE director_budget_state SET last_tick_at = NULL WHERE repo_id = ?`).run(
         repoId,
