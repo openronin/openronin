@@ -180,9 +180,7 @@ test("recalibrate writes to budget history table", () => {
       "failed",
     ]);
     recalibrateBudget(db, repoId, cfg);
-    const hist = db
-      .prepare(`SELECT * FROM director_budget_history WHERE repo_id = ?`)
-      .all(repoId);
+    const hist = db.prepare(`SELECT * FROM director_budget_history WHERE repo_id = ?`).all(repoId);
     assert.equal(hist.length, 1);
     assert.match(hist[0].reason, /climb/);
   } finally {
@@ -203,11 +201,7 @@ test("shouldRecalibrateToday: true on first call, false right after", () => {
       "failed",
     ]);
     recalibrateBudget(db, repoId, cfg);
-    assert.equal(
-      shouldRecalibrateToday(db, repoId),
-      false,
-      "second call same day should not",
-    );
+    assert.equal(shouldRecalibrateToday(db, repoId), false, "second call same day should not");
   } finally {
     cleanup(dir);
   }

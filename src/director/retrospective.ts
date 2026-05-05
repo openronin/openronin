@@ -85,18 +85,12 @@ export function sampleRecentOutcomes(db: Db, repoId: number): RetroSample {
   return { windowDays: WINDOW_DAYS, total, executed, failed, rejected, skipped, successRate };
 }
 
-export function recalibrateBudget(
-  db: Db,
-  repoId: number,
-  cfg: BudgetConfig,
-): RetroResult | null {
+export function recalibrateBudget(db: Db, repoId: number, cfg: BudgetConfig): RetroResult | null {
   const sample = sampleRecentOutcomes(db, repoId);
 
   // Read current caps.
   const cur = db
-    .prepare(
-      `SELECT daily_cap_usd, weekly_cap_usd FROM director_budget_state WHERE repo_id = ?`,
-    )
+    .prepare(`SELECT daily_cap_usd, weekly_cap_usd FROM director_budget_state WHERE repo_id = ?`)
     .get(repoId) as { daily_cap_usd: number; weekly_cap_usd: number } | undefined;
   if (!cur) return null;
 
@@ -163,9 +157,7 @@ function clamp(v: number, lo: number, hi: number): number {
 // `director_budget_state` so we don't need a separate column.
 export function shouldRecalibrateToday(db: Db, repoId: number): boolean {
   const row = db
-    .prepare(
-      `SELECT MAX(date(ts)) AS last_day FROM director_budget_history WHERE repo_id = ?`,
-    )
+    .prepare(`SELECT MAX(date(ts)) AS last_day FROM director_budget_history WHERE repo_id = ?`)
     .get(repoId) as { last_day: string | null } | undefined;
   const today = new Date().toISOString().slice(0, 10);
   return !row?.last_day || row.last_day < today;
