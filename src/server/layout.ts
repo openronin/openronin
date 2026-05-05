@@ -50,6 +50,7 @@ const PRIMARY_NAV = [
   { href: "/admin/", label: "Dashboard", section: "dashboard", key: "d" },
   { href: "/admin/repos", label: "Repos", section: "repos", key: "r" },
   { href: "/admin/tasks", label: "Tasks", section: "tasks", key: "t" },
+  { href: "/admin/director", label: "Director", section: "director", key: "i" },
   { href: "/admin/cost", label: "Cost", section: "cost", key: "c" },
 ];
 
@@ -153,6 +154,8 @@ export function page(opts: {
 <script>tailwind.config = { darkMode: 'class' }</script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@14.1.3/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <style>
 /* ─── Design Tokens ─────────────────────────────────────────────────────── */
 :root {

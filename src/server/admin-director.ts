@@ -1,27 +1,31 @@
-// Admin UI for the Director — two-way chat (PR #3b).
+// Admin UI for the Director — classic-chat layout.
 //
 // Mounts at /admin/director (list) and /admin/director/:slug (per-repo
 // timeline + interactions). HTMX-driven; no JS framework.
 //
-// Interaction surface:
-//   POST /admin/director/:slug/messages
-//        body: type=directive|answer|veto, body=<text>
-//        → appends a user-role message; tick consumes it next cycle.
-//   POST /admin/director/:slug/decisions/:id/approve
-//        → re-runs authority gate, executes the side-effect, flips
-//          outcome to executed (or failed/skipped). Posts a report.
-//   POST /admin/director/:slug/decisions/:id/reject
-//        body: reason=<optional text>
-//        → flips outcome to rejected, records reason as veto message.
+// Layout: messages render top-to-bottom by timestamp (oldest at top, newest
+// at bottom). The composer sits at the bottom under the thread, typewriter-
+// style. After every HTMX swap the JS scrolls the thread to the latest
+// message. Repetitive `tick_log` / system-noise messages are collapsed into
+// a single "show N system events" disclosure to keep the human-readable
+// signal in focus.
 //
-// Each POST returns an HTMX-swapped fragment of the chat thread so the
-// page updates in place without a full reload.
+// Markdown is rendered with `marked` (CDN) and sanitised through DOMPurify
+// before insertion. Done client-side post-render rather than server-side
+// because (a) markdown lives in untrusted LLM output, (b) DOMPurify handles
+// the XSS gauntlet better than handrolled escaping, (c) keeps the server
+// hot path Hono-string-only.
+//
+// Interaction surface (POST):
+//   /:slug/messages
+//   /:slug/decisions/:id/approve
+//   /:slug/decisions/:id/reject
 
 import { Hono } from "hono";
 import type { Db } from "../storage/db.js";
 import type { RuntimeConfig } from "../config/schema.js";
 import { repoKey, type RepoConfig } from "../config/schema.js";
-import { html, isHtmx, page, t as time, type TrustedHtml } from "./layout.js";
+import { html, isHtmx, page, raw, t as time, type TrustedHtml } from "./layout.js";
 import { card } from "./components/card.js";
 import { badge, type BadgeTone } from "./components/badge.js";
 import { appendMessage, recentMessages } from "../director/chat.js";
@@ -105,9 +109,33 @@ function messageTypeBadgeTone(type: MessageType): BadgeTone {
   }
 }
 
-// Did this proposal-type message represent a still-pending decision? If
-// the underlying decision has been executed/rejected/etc, we hide the
-// approve/reject buttons.
+// Group consecutive system / tick_log noise into a single collapsed entry
+// so a long history of "tick skipped" lines doesn't drown out the
+// human-readable conversation. Each non-noise message ends a noise group.
+type RenderItem = { kind: "msg"; m: DirectorMessage } | { kind: "noise"; msgs: DirectorMessage[] };
+
+function isNoise(m: DirectorMessage): boolean {
+  return m.role === "system" && (m.type === "tick_log" || m.type === "error");
+}
+
+function groupNoise(messages: DirectorMessage[]): RenderItem[] {
+  const out: RenderItem[] = [];
+  let bucket: DirectorMessage[] = [];
+  for (const m of messages) {
+    if (isNoise(m)) {
+      bucket.push(m);
+    } else {
+      if (bucket.length > 0) {
+        out.push({ kind: "noise", msgs: bucket });
+        bucket = [];
+      }
+      out.push({ kind: "msg", m });
+    }
+  }
+  if (bucket.length > 0) out.push({ kind: "noise", msgs: bucket });
+  return out;
+}
+
 function decisionStillPending(db: Db, decisionId: number | null): boolean {
   if (decisionId == null) return false;
   const row = db.prepare(`SELECT outcome FROM director_decisions WHERE id = ?`).get(decisionId) as
@@ -117,38 +145,68 @@ function decisionStillPending(db: Db, decisionId: number | null): boolean {
 }
 
 function renderMessage(db: Db, slug: string, m: DirectorMessage): TrustedHtml {
-  const isDirector = m.role === "director";
   const isUser = m.role === "user";
-  const align = isUser ? "ml-auto" : "";
-  const bubble = isDirector
-    ? "bg-[var(--surface-2)]"
-    : isUser
-      ? "bg-[var(--accent-soft)]"
-      : "bg-[var(--surface-3)]";
-  const speaker = isDirector ? "👔 director" : isUser ? "👤 you" : "⚙️ system";
-
+  const isDirector = m.role === "director";
+  // Visual slots: director on the left, user on the right, system small.
+  const align = isUser ? "items-end" : "items-start";
+  const bubbleColor = isUser
+    ? "bg-[var(--accent-soft)] border-[var(--accent)]"
+    : isDirector
+      ? "bg-[var(--surface-elevated)] border-[var(--border)]"
+      : "bg-[var(--surface-sunken)] border-[var(--border)]";
+  const speaker = isUser ? "👤 you" : isDirector ? "👔 director" : "⚙️ system";
   const isLiveProposal = m.type === "proposal" && decisionStillPending(db, m.decisionId);
 
   return html`
-    <div class="flex flex-col gap-1 max-w-[80ch] ${align}">
-      <div class="flex items-center gap-2 text-xs text-[var(--text-2)]">
+    <div class="flex flex-col ${align} gap-1 w-full">
+      <div class="flex items-center gap-2 text-xs text-[var(--fg-muted)]">
         <span class="font-mono">${speaker}</span>
         ${badge({ label: m.type, tone: messageTypeBadgeTone(m.type) })}
         <span>${time(m.ts)}</span>
       </div>
-      <div
-        class="rounded-md border border-[var(--border)] ${bubble} p-3 text-sm whitespace-pre-wrap"
-      >
-        ${m.body}
+      <div class="rounded-lg border ${bubbleColor} p-3 max-w-[min(42rem,90%)] text-sm shadow-sm">
+        <div class="md-body">${m.body}</div>
+        ${isLiveProposal && m.decisionId ? renderProposalActions(slug, m.decisionId) : ""}
       </div>
-      ${isLiveProposal && m.decisionId ? renderProposalActions(slug, m.decisionId) : ""}
     </div>
+  `;
+}
+
+function renderNoiseGroup(msgs: DirectorMessage[]): TrustedHtml {
+  // Show first + last + a folded middle. Default collapsed.
+  if (msgs.length === 0) return raw("");
+  const first = msgs[0]!;
+  const last = msgs[msgs.length - 1]!;
+  const summary = `${msgs.length} system event${msgs.length === 1 ? "" : "s"} (${first.type}…${last.type})`;
+  return html`
+    <details class="w-full text-xs text-[var(--fg-muted)] my-1 px-1">
+      <summary class="cursor-pointer select-none py-1 hover:text-[var(--fg-primary)]">
+        ⚙️ ${summary} · ${time(first.ts)} → ${time(last.ts)}
+      </summary>
+      <div class="flex flex-col gap-2 mt-2 pl-4 border-l-2 border-[var(--border)]">
+        ${msgs.map(
+          (m) => html`
+            <div class="flex flex-col gap-1">
+              <div class="flex items-center gap-2 text-[10px] text-[var(--fg-muted)]">
+                ${badge({ label: m.type, tone: messageTypeBadgeTone(m.type) })}
+                <span>${time(m.ts)}</span>
+              </div>
+              <div
+                class="rounded border border-[var(--border)] bg-[var(--surface-sunken)] p-2 text-xs whitespace-pre-wrap"
+              >
+                ${m.body}
+              </div>
+            </div>
+          `,
+        )}
+      </div>
+    </details>
   `;
 }
 
 function renderProposalActions(slug: string, decisionId: number): TrustedHtml {
   return html`
-    <div class="flex items-center gap-2 mt-1">
+    <div class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-[var(--border)]">
       <button
         class="btn btn-success btn-sm"
         hx-post="/admin/director/${slug}/decisions/${decisionId}/approve"
@@ -163,47 +221,43 @@ function renderProposalActions(slug: string, decisionId: number): TrustedHtml {
         hx-post="/admin/director/${slug}/decisions/${decisionId}/reject"
         hx-target="#chat-thread"
         hx-swap="outerHTML"
-        hx-include="closest div[data-decision-form]"
+        hx-vals="js:{reason: document.getElementById('reject-${decisionId}').value}"
       >
         ✗ Reject
       </button>
       <input
+        id="reject-${decisionId}"
         type="text"
-        name="reason"
-        form="reject-form-${decisionId}"
         placeholder="reject reason (optional)"
-        class="form-input form-input-sm flex-1 text-xs"
-        data-decision-form
+        class="form-input form-input-sm flex-1 min-w-[14rem] text-xs"
       />
     </div>
   `;
 }
 
-function renderUserMessageForm(slug: string): TrustedHtml {
+function renderComposer(slug: string): TrustedHtml {
   return html`
     <form
-      class="flex flex-col gap-2 p-3 border border-[var(--border)] rounded-md bg-[var(--surface-2)]"
+      class="flex flex-col gap-2 p-3 border border-[var(--border)] rounded-lg bg-[var(--surface-elevated)] shadow-sm"
       hx-post="/admin/director/${slug}/messages"
       hx-target="#chat-thread"
       hx-swap="outerHTML"
       hx-on::after-request="if(event.detail.successful) this.reset()"
     >
-      <div class="flex items-center gap-2 text-xs">
-        <label class="text-[var(--text-2)]">Type:</label>
-        <select name="type" class="form-select form-select-sm">
-          <option value="directive">directive</option>
-          <option value="answer">answer</option>
-          <option value="veto">veto</option>
-        </select>
-      </div>
       <textarea
         name="body"
         rows="2"
         required
-        placeholder="Write a directive (e.g. 'focus on tests this week') or answer the director's last question."
-        class="form-textarea text-sm"
+        placeholder="Send a directive, answer a question, or veto. Markdown supported. ⌘/Ctrl+Enter to send."
+        class="form-textarea text-sm resize-none"
+        onkeydown="if((event.metaKey||event.ctrlKey)&&event.key==='Enter'){event.preventDefault();this.form.requestSubmit();}"
       ></textarea>
-      <div>
+      <div class="flex items-center justify-between gap-2">
+        <select name="type" class="form-select form-select-sm text-xs">
+          <option value="directive">directive</option>
+          <option value="answer">answer</option>
+          <option value="veto">veto</option>
+        </select>
         <button type="submit" class="btn btn-primary btn-sm">Send</button>
       </div>
     </form>
@@ -211,16 +265,23 @@ function renderUserMessageForm(slug: string): TrustedHtml {
 }
 
 function renderChatThread(db: Db, slug: string, messages: DirectorMessage[]): TrustedHtml {
+  // messages comes ordered ascending by id (oldest first) — render top→bottom.
+  const items = groupNoise(messages);
   return html`
     <div id="chat-thread" class="flex flex-col gap-3">
-      ${renderUserMessageForm(slug)}
-      ${messages.length === 0
-        ? html`<p class="text-sm text-[var(--text-2)]">
-            Empty thread. The director will start posting here once it ticks.
-          </p>`
-        : html`<div class="flex flex-col gap-3">
-            ${messages.map((m) => renderMessage(db, slug, m))}
-          </div>`}
+      <div
+        id="chat-scroll"
+        class="flex flex-col gap-3 max-h-[60vh] overflow-y-auto p-3 border border-[var(--border)] rounded-lg bg-[var(--surface-base)]"
+      >
+        ${messages.length === 0
+          ? html`<p class="text-sm text-[var(--fg-muted)] text-center py-8">
+              Empty thread. The director will start posting here on its next tick.
+            </p>`
+          : items.map((it) =>
+              it.kind === "msg" ? renderMessage(db, slug, it.m) : renderNoiseGroup(it.msgs),
+            )}
+      </div>
+      ${renderComposer(slug)}
     </div>
   `;
 }
@@ -234,6 +295,38 @@ function defaultVcsFactory(repo: RepoConfig): VcsProvider {
   }
 }
 
+// Client-side script that re-renders Markdown in any .md-body element
+// after the page (or any HTMX swap) lands. Runs on initial load and after
+// every htmx:afterSwap. Uses marked (CDN) + DOMPurify (CDN).
+const CHAT_INIT_SCRIPT = `
+<script>
+(function(){
+  function renderMarkdown(root){
+    if(!window.marked || !window.DOMPurify) return;
+    var nodes = (root || document).querySelectorAll('.md-body:not([data-md-rendered])');
+    nodes.forEach(function(el){
+      var raw = el.textContent || '';
+      var html = window.marked.parse(raw, {breaks: true, gfm: true});
+      el.innerHTML = window.DOMPurify.sanitize(html);
+      el.setAttribute('data-md-rendered', '1');
+    });
+  }
+  function scrollChatToBottom(){
+    var c = document.getElementById('chat-scroll');
+    if(c) c.scrollTop = c.scrollHeight;
+  }
+  function tick(){
+    renderMarkdown(document);
+    scrollChatToBottom();
+  }
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', tick);
+  } else { tick(); }
+  document.body.addEventListener('htmx:afterSwap', function(){ tick(); });
+})();
+</script>
+`;
+
 export function directorAdminRoute({ db, getConfig }: Args): Hono {
   const app = new Hono();
 
@@ -246,7 +339,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
           ? card({
               title: "No director-enabled repos",
               body: html`
-                <p class="text-sm text-[var(--text-2)]">
+                <p class="text-sm text-[var(--fg-muted)]">
                   Enable the Director on a repo by setting
                   <code class="code-inline">director.enabled: true</code> and providing a
                   <code class="code-inline">director.charter</code> in its YAML config under
@@ -270,7 +363,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
                       <div class="flex items-center justify-between">
                         <div class="flex flex-col">
                           <div class="font-medium">${e.owner}/${e.name}</div>
-                          <div class="text-xs text-[var(--text-2)]">${e.slug}</div>
+                          <div class="text-xs text-[var(--fg-muted)]">${e.slug}</div>
                         </div>
                         <div class="flex items-center gap-2">
                           ${badge({ label: e.mode, tone: modeBadgeTone(e.mode) })}
@@ -308,7 +401,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     const repo = config.repos.find((r) => repoKey(r) === slug);
     if (!repo || !repo.director) return c.notFound();
 
-    const messages = recentMessages(db, entry.repoId, 100);
+    const messages = recentMessages(db, entry.repoId, 200);
     const decisions = recentDecisions(db, entry.repoId, 20);
     const charter = latestCharterVersion(db, entry.repoId);
     const budgetState = ensureBudgetState(db, entry.repoId, repo.director.budget);
@@ -320,11 +413,11 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
         ? html`
             <div class="flex flex-col gap-2">
               <div>
-                <div class="text-xs text-[var(--text-2)]">Vision</div>
+                <div class="text-xs text-[var(--fg-muted)]">Vision</div>
                 <div class="text-sm whitespace-pre-wrap">${charter.charter.vision}</div>
               </div>
               <div>
-                <div class="text-xs text-[var(--text-2)]">Priorities</div>
+                <div class="text-xs text-[var(--fg-muted)]">Priorities</div>
                 <ul class="text-sm list-disc pl-5">
                   ${charter.charter.priorities.map(
                     (p) =>
@@ -338,7 +431,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
               ${charter.charter.out_of_bounds.length > 0
                 ? html`
                     <div>
-                      <div class="text-xs text-[var(--text-2)]">Out of bounds</div>
+                      <div class="text-xs text-[var(--fg-muted)]">Out of bounds</div>
                       <ul class="text-sm list-disc pl-5">
                         ${charter.charter.out_of_bounds.map((b) => html`<li>${b}</li>`)}
                       </ul>
@@ -347,7 +440,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
                 : ""}
             </div>
           `
-        : html`<p class="text-sm text-[var(--text-2)]">No charter version captured yet.</p>`,
+        : html`<p class="text-sm text-[var(--fg-muted)]">No charter version captured yet.</p>`,
     });
 
     const budgetCard = card({
@@ -410,7 +503,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       title: `Recent decisions — ${decisions.length}`,
       body:
         decisions.length === 0
-          ? html`<p class="text-sm text-[var(--text-2)]">No decisions logged yet.</p>`
+          ? html`<p class="text-sm text-[var(--fg-muted)]">No decisions logged yet.</p>`
           : html`
               <table class="data-table text-sm w-full">
                 <thead>
@@ -456,6 +549,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
         <div class="lg:col-span-1 flex flex-col gap-4">${charterCard} ${budgetCard}</div>
         <div class="lg:col-span-2 flex flex-col gap-4">${chatCard} ${decisionsCard}</div>
       </div>
+      ${raw(CHAT_INIT_SCRIPT)}
     `;
     return c.html(
       page({
@@ -471,7 +565,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
     );
   });
 
-  // ── POST /:slug/messages — user posts a directive/answer/veto ─────────
+  // ── POST /:slug/messages ─────────────────────────────────────────────
   app.post("/:slug/messages", async (c) => {
     const slug = c.req.param("slug");
     const entries = listEntries(db, getConfig);
@@ -494,11 +588,11 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       metadata: { repo: slug, actor: "admin" },
     });
 
-    const messages = recentMessages(db, entry.repoId, 100);
+    const messages = recentMessages(db, entry.repoId, 200);
     return c.html(renderChatThread(db, slug, messages).value);
   });
 
-  // ── POST /:slug/decisions/:id/approve — execute a pending decision ────
+  // ── POST /:slug/decisions/:id/approve ────────────────────────────────
   app.post("/:slug/decisions/:id/approve", async (c) => {
     const slug = c.req.param("slug");
     const decisionId = Number(c.req.param("id"));
@@ -519,11 +613,11 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       getVcs: () => defaultVcsFactory(repo),
     });
 
-    const messages = recentMessages(db, entry.repoId, 100);
+    const messages = recentMessages(db, entry.repoId, 200);
     return c.html(renderChatThread(db, slug, messages).value);
   });
 
-  // ── POST /:slug/decisions/:id/reject — record reject + reason ─────────
+  // ── POST /:slug/decisions/:id/reject ─────────────────────────────────
   app.post("/:slug/decisions/:id/reject", async (c) => {
     const slug = c.req.param("slug");
     const decisionId = Number(c.req.param("id"));
@@ -546,7 +640,7 @@ export function directorAdminRoute({ db, getConfig }: Args): Hono {
       reason,
     });
 
-    const messages = recentMessages(db, entry.repoId, 100);
+    const messages = recentMessages(db, entry.repoId, 200);
     return c.html(renderChatThread(db, slug, messages).value);
   });
 
