@@ -883,6 +883,17 @@ const CHAT_INIT_SCRIPT = `
       var raw = el.textContent || '';
       var html = window.marked.parse(raw, {breaks: true, gfm: true});
       el.innerHTML = window.DOMPurify.sanitize(html);
+      // Highlight any code blocks inside the freshly-rendered bubble.
+      // hljs.highlightAll() is global so we'd double-highlight existing
+      // bubbles — instead walk just the new pre>code elements.
+      if(window.hljs){
+        el.querySelectorAll('pre code').forEach(function(c){
+          if(!c.dataset.hljsRendered){
+            window.hljs.highlightElement(c);
+            c.dataset.hljsRendered = '1';
+          }
+        });
+      }
       el.setAttribute('data-md-rendered', '1');
     });
   }

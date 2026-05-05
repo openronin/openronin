@@ -125,6 +125,25 @@ export function setDecisionPayload(db: Db, decisionId: number, payload: unknown)
   );
 }
 
+// Sweep over `pending` decisions older than `maxAgeDays` and flip them to
+// `expired`. Returns the count of rows expired so the caller can log /
+// chat-post if desired. Cheap O(rows) query — use a partial index on
+// outcome=pending if this becomes hot.
+export function expireStalePending(db: Db, repoId: number, maxAgeDays = 7): number {
+  const result = db
+    .prepare(
+      `UPDATE director_decisions
+       SET outcome = 'expired',
+           outcome_ts = datetime('now'),
+           outcome_details = 'expired after ' || ? || ' days without human action'
+       WHERE repo_id = ?
+         AND outcome = 'pending'
+         AND ts < datetime('now', '-' || ? || ' days')`,
+    )
+    .run(maxAgeDays, repoId, maxAgeDays);
+  return result.changes;
+}
+
 export function pendingDecisions(db: Db, repoId: number): Decision[] {
   const rows = db
     .prepare(

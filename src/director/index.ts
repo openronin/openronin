@@ -21,6 +21,7 @@ import { runTick, type TickReason } from "./tick.js";
 import { releaseTick, tryAcquireTick } from "./active-tick.js";
 import { getLastDigestDate, runDigest, shouldRunDigest } from "./digest.js";
 import { maybePostTrustRampSuggestion } from "./trust-ramp.js";
+import { expireStalePending } from "./decisions.js";
 import { MimoEngine } from "../engines/mimo.js";
 import type { DirectorConfig } from "./types.js";
 
@@ -167,6 +168,25 @@ async function loopOnce(db: Db, config: RuntimeConfig): Promise<void> {
   for (const t of targets) {
     if (stopping) return;
     rolloverDayIfNeeded(db, t.repoId);
+    // Expire pending proposals untouched for >7d — silent cleanup so a
+    // ghost queue doesn't block reactivity ("X proposals pending" never
+    // dropping). Cheap UPDATE with a date predicate; runs every loop
+    // iteration but only does work when there's something to expire.
+    try {
+      const expired = expireStalePending(db, t.repoId);
+      if (expired > 0) {
+        appendMessage(db, {
+          repoId: t.repoId,
+          role: "system",
+          type: "tick_log",
+          body: `expired ${expired} pending proposal(s) untouched for >7d`,
+          metadata: { repo: repoKey(t.repo), kind: "expire_pending", count: expired },
+        });
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[director] expire-pending error on ${repoKey(t.repo)}:`, err);
+    }
     const state = ensureBudgetState(db, t.repoId, t.director.budget);
     // Digest runs out-of-band from the planning cadence — the user wants
     // morning context every day, even if the planning cadence is 6h+.
