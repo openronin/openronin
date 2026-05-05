@@ -4,6 +4,23 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Added — director: adaptive budget retrospective
+
+Daily/weekly budget caps now move with the director's track record instead of staying static at the YAML-configured initial values. Once per UTC day, on the first tick of the day, `recalibrateBudget()` looks at the last 14 days of terminal decision outcomes:
+
+- **success_rate ≥ 0.80** over a meaningful sample (≥5 decisions) → caps climb 10%, capped at `max_daily_usd` / `max_weekly_usd`
+- **success_rate ≤ 0.40** → caps shrink 20%, floored at the initial values
+- **otherwise** → hold steady (no DB write, no chat message)
+
+`success_rate = executed / (executed + failed + rejected)`. `skipped` is excluded — that's an operator policy choice, not an outcome. `dry_run` and `pending` are excluded as not-yet-outcomes.
+
+Each adjustment is logged to a new `director_budget_history` table (schema migration **v13**) and surfaced as a `tick_log` chat message so the operator can see the trajectory at a glance.
+
+Caveat: this isn't a "good outcome retrospective" in the strong sense — that would require polling the VCS for revert / CI status of merged PRs over a 7-day quarantine. Out of scope here. Code documents this honestly.
+
+7 new tests cover empty samples, success-rate computation (excluding `skipped`), climb-with-ceiling, shrink-with-floor, insufficient-sample no-op, middling-rate hold-steady, history-table writes, once-per-day gating.
+
+
 ### Added — director: Telegram bridge
 
 The director's chat thread now mirrors to Telegram for whitelisted users, and accepts management commands back. Lets an operator approve / reject / pause / resume from a phone without opening the admin UI.
