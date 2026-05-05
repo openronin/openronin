@@ -110,9 +110,9 @@ function messageTypeBadgeTone(type: MessageType): BadgeTone {
 // approve/reject buttons.
 function decisionStillPending(db: Db, decisionId: number | null): boolean {
   if (decisionId == null) return false;
-  const row = db
-    .prepare(`SELECT outcome FROM director_decisions WHERE id = ?`)
-    .get(decisionId) as { outcome: string } | undefined;
+  const row = db.prepare(`SELECT outcome FROM director_decisions WHERE id = ?`).get(decisionId) as
+    | { outcome: string }
+    | undefined;
   return row?.outcome === "pending";
 }
 
@@ -127,8 +127,7 @@ function renderMessage(db: Db, slug: string, m: DirectorMessage): TrustedHtml {
       : "bg-[var(--surface-3)]";
   const speaker = isDirector ? "👔 director" : isUser ? "👤 you" : "⚙️ system";
 
-  const isLiveProposal =
-    m.type === "proposal" && decisionStillPending(db, m.decisionId);
+  const isLiveProposal = m.type === "proposal" && decisionStillPending(db, m.decisionId);
 
   return html`
     <div class="flex flex-col gap-1 max-w-[80ch] ${align}">
@@ -142,9 +141,7 @@ function renderMessage(db: Db, slug: string, m: DirectorMessage): TrustedHtml {
       >
         ${m.body}
       </div>
-      ${isLiveProposal && m.decisionId
-        ? renderProposalActions(slug, m.decisionId)
-        : ""}
+      ${isLiveProposal && m.decisionId ? renderProposalActions(slug, m.decisionId) : ""}
     </div>
   `;
 }
@@ -213,11 +210,7 @@ function renderUserMessageForm(slug: string): TrustedHtml {
   `;
 }
 
-function renderChatThread(
-  db: Db,
-  slug: string,
-  messages: DirectorMessage[],
-): TrustedHtml {
+function renderChatThread(db: Db, slug: string, messages: DirectorMessage[]): TrustedHtml {
   return html`
     <div id="chat-thread" class="flex flex-col gap-3">
       ${renderUserMessageForm(slug)}

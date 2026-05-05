@@ -86,9 +86,9 @@ export function recentDecisions(db: Db, repoId: number, limit = 50): Decision[] 
 }
 
 export function getDecisionById(db: Db, decisionId: number): Decision | null {
-  const row = db
-    .prepare(`SELECT * FROM director_decisions WHERE id = ?`)
-    .get(decisionId) as DecisionRow | undefined;
+  const row = db.prepare(`SELECT * FROM director_decisions WHERE id = ?`).get(decisionId) as
+    | DecisionRow
+    | undefined;
   return row ? rowToDecision(row) : null;
 }
 
