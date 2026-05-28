@@ -30,6 +30,56 @@ test("cadence: isDue treats null as due, future as not-due", async () => {
   assert.equal(isDue(new Date(now.getTime() + 60_000).toISOString(), now), false);
 });
 
+test("liftTransientPark: lifts error/dirty to cancelled, leaves human-gated statuses untouched", async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "aidev-lift-"));
+  try {
+    const { initDb } = await import("../dist/storage/db.js");
+    const { ensureRepo, upsertTask } = await import("../dist/storage/tasks.js");
+    const { recordPrBranch, liftTransientPark, getPrBranchByTask } =
+      await import("../dist/storage/pr-branches.js");
+
+    const db = initDb(tmp);
+    const repoId = ensureRepo(db, { provider: "github", owner: "o", name: "n" });
+
+    // Task with error status — should be lifted
+    const t1 = upsertTask(db, repoId, "11", "issue");
+    recordPrBranch(db, { taskId: t1, branch: "openronin/11", status: "error" });
+    assert.equal(liftTransientPark(db, t1), true, "returns true when a row was updated");
+    assert.equal(getPrBranchByTask(db, t1)?.status, "cancelled");
+
+    // Task with dirty status — should be lifted
+    const t2 = upsertTask(db, repoId, "12", "issue");
+    recordPrBranch(db, { taskId: t2, branch: "openronin/12", status: "dirty" });
+    assert.equal(liftTransientPark(db, t2), true);
+    assert.equal(getPrBranchByTask(db, t2)?.status, "cancelled");
+
+    // Task with guardrail_blocked — must NOT be lifted
+    const t3 = upsertTask(db, repoId, "13", "issue");
+    recordPrBranch(db, { taskId: t3, branch: "openronin/13", status: "guardrail_blocked" });
+    assert.equal(liftTransientPark(db, t3), false, "returns false when nothing changed");
+    assert.equal(getPrBranchByTask(db, t3)?.status, "guardrail_blocked");
+
+    // Task with needs_human — must NOT be lifted
+    const t4 = upsertTask(db, repoId, "14", "issue");
+    recordPrBranch(db, { taskId: t4, branch: "openronin/14", status: "needs_human" });
+    assert.equal(liftTransientPark(db, t4), false);
+    assert.equal(getPrBranchByTask(db, t4)?.status, "needs_human");
+
+    db.close();
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("TRANSIENT_PARK_STATUSES excludes human-gated statuses", async () => {
+  const { TRANSIENT_PARK_STATUSES } = await import("../dist/scheduler/worker.js");
+  assert.ok(TRANSIENT_PARK_STATUSES.has("error"));
+  assert.ok(TRANSIENT_PARK_STATUSES.has("dirty"));
+  assert.ok(!TRANSIENT_PARK_STATUSES.has("guardrail_blocked"));
+  assert.ok(!TRANSIENT_PARK_STATUSES.has("needs_human"));
+  assert.ok(!TRANSIENT_PARK_STATUSES.has("no_changes"));
+});
+
 test("queue: dequeue picks high priority then earliest due, marks running", async () => {
   const tmp = mkdtempSync(join(tmpdir(), "aidev-queue-"));
   try {

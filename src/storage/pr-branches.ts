@@ -109,6 +109,19 @@ export function listBlockedPatches(db: Db): BlockedPatchRow[] {
     .all() as BlockedPatchRow[];
 }
 
+// Lift a transient infra park (error / dirty) to 'cancelled' so the
+// scheduler can re-route the task normally on the next drain.
+// Returns true if a row was actually updated.
+export function liftTransientPark(db: Db, taskId: number): boolean {
+  const result = db
+    .prepare(
+      `UPDATE pr_branches SET status = 'cancelled', updated_at = datetime('now')
+       WHERE task_id = ? AND status IN ('error', 'dirty')`,
+    )
+    .run(taskId);
+  return result.changes > 0;
+}
+
 // Find a pr_branches row by PR number, scoped to a repo. The PR has its own
 // task (external_id=PR number), but the row was created against the source
 // issue's task — so we join through tasks → repos.

@@ -6,6 +6,7 @@ import { GitlabVcsProvider } from "../providers/gitlab.js";
 import { JiraTrackerProvider } from "../providers/jira.js";
 import { TodoistTrackerProvider } from "../providers/todoist.js";
 import { ensureRepo, upsertTask, upsertJiraTask, upsertTodoistTask } from "../storage/tasks.js";
+import { liftTransientPark } from "../storage/pr-branches.js";
 import { enqueue } from "../scheduler/queue.js";
 
 interface Args {
@@ -155,9 +156,21 @@ export function webhooksRoute({ db, getConfig, scheduler }: Args): Hono {
       name: repoCfg.name,
     });
     const taskId = upsertTask(db, dbRepoId, String(number), kind);
+
+    // A non-bot comment on an issue lifts any transient infra park (error /
+    // dirty) to 'cancelled' so pickLane can re-route on the next drain.
+    // Label/edit events have an empty body — this only fires on real comments.
+    let lifted = false;
+    if (candidateBody && kind === "issue") {
+      lifted = liftTransientPark(db, taskId);
+      if (lifted) {
+        console.log(`[webhook] lifted transient park for task #${taskId} (issue #${number})`);
+      }
+    }
+
     enqueue(db, taskId, "high", null);
 
-    return c.json({ status: "queued", taskId, event, action: payload.action });
+    return c.json({ status: "queued", taskId, event, action: payload.action, lifted });
   });
 
   // -------- GitLab webhook --------
