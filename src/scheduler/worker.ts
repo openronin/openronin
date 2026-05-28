@@ -16,19 +16,15 @@ import { RateLimited } from "../engines/types.js";
 import { ensureRepo } from "../storage/tasks.js";
 import { getPrBranchByPrNumber, getPrBranchByTask } from "../storage/pr-branches.js";
 
-// Statuses on pr_branches that mean "this attempt is parked, don't redo it
-// from scratch on the next reconcile". Lifted only by human action (label
-// removal / new comment that webhook re-enqueues / explicit retry button).
-const TERMINAL_BRANCH_STATUSES = new Set([
-  "guardrail_blocked",
-  "dirty",
-  "no_changes",
-  "needs_human",
-  // "error" is set by the patch lane's catch block (e.g. clone failed,
-  // setIdentity failed, agent threw before producing a commit). Without
-  // this entry we'd loop the same failure every reconcile cycle.
-  "error",
-]);
+// Statuses caused by infra/agent failure, not by a human-gated decision.
+// A verified non-bot webhook comment lifts these to 'cancelled' so that
+// pickLane can re-route on the next drain (see webhooks.ts).
+export const TRANSIENT_PARK_STATUSES = new Set(["error", "dirty"]);
+
+// Statuses that require explicit human action to lift:
+// admin Retry button (guardrail_blocked), patch_trigger_label removal
+// (guardrail_blocked), or 24h TTL (no_changes / needs_human).
+const TERMINAL_BRANCH_STATUSES = new Set(["guardrail_blocked", "no_changes", "needs_human"]);
 
 export interface WorkResult {
   taskId: number;
@@ -264,11 +260,13 @@ function pickLane(
   const hasPatch = repo.lanes.includes("patch");
   const hasTrigger = (hasPatch || hasPatchMulti) && item.labels.includes(repo.patch_trigger_label);
 
-  // If a previous patch attempt parked the work in a terminal state
-  // (guardrail_blocked, dirty, no_changes, needs_human) — do NOT loop into
-  // analyze/patch again. The user must remove the label or otherwise unstick
-  // it. Webhook on a fresh non-bot comment will re-enqueue, and at that
-  // point the user has presumably acted.
+  // If a previous patch attempt parked the work in a human-gated terminal
+  // state (guardrail_blocked, no_changes, needs_human) — do NOT loop into
+  // analyze/patch again. The user must remove the label, use the Retry
+  // button, or wait for the 24h TTL.
+  // Transient infra parks (error, dirty) are lifted to 'cancelled' in the
+  // webhook handler on receipt of a real non-bot comment, so they will not
+  // appear here once lifted.
   if (hasTrigger) {
     const taskRow = db
       .prepare("SELECT id FROM tasks WHERE repo_id = ? AND external_id = ?")
