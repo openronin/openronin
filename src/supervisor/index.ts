@@ -135,6 +135,11 @@ export async function runJob(ctx: SupervisorContext, args: RunJobArgs): Promise<
       duration_ms: result.durationMs,
     });
     finishRun(ctx.db, runId, { status: "ok", usage: result.usage, logPath });
+    console.log(
+      `[run:${runId}] ${args.lane} ${choice.engine.id}/${choice.model}` +
+        ` tokens_in=${result.usage.tokensIn ?? "?"} tokens_out=${result.usage.tokensOut ?? "?"}` +
+        ` cost=$${(result.usage.costUsd ?? 0).toFixed(4)} repo=${repo}`,
+    );
     return { result, runId, choice };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

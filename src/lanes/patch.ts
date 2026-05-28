@@ -169,6 +169,20 @@ ${stored.expanded_requirements}`;
       }
     }
 
+    // Trim the body before rendering to cap input-token cost. Large issue
+    // bodies (especially with analyst-expanded requirements) are the primary
+    // driver of per-run cost. The truncation marker lets the agent know
+    // context was cut so it can ask for clarification if needed.
+    const bodyLimit = repo.patch_body_max_chars;
+    if (expandedBody.length > bodyLimit) {
+      console.warn(
+        `[patch] body truncated ${expandedBody.length}→${bodyLimit} chars for #${item.number}`,
+      );
+      expandedBody =
+        expandedBody.slice(0, bodyLimit) +
+        `\n\n[… body truncated at ${bodyLimit} chars to reduce token cost]`;
+    }
+
     const userPrompt = renderTemplate(template, {
       kind: item.kind === "pull_request" ? "pull request" : "issue",
       repo_full_name: `${repo.owner}/${repo.name}`,
@@ -207,6 +221,12 @@ ${stored.expanded_requirements}`;
       },
     });
     const agentSummary = job.result.content || "(agent produced no summary)";
+    const u = job.result.usage;
+    console.log(
+      `[patch] run=${job.runId} engine=${job.choice.engine.id}/${job.choice.model}` +
+        ` tokens_in=${u.tokensIn ?? "?"} tokens_out=${u.tokensOut ?? "?"}` +
+        ` cost=$${(u.costUsd ?? 0).toFixed(4)}`,
+    );
 
     // 4. Compare HEAD against base — Claude is expected to have committed.
     let headSha = await getCurrentSha(workdir);
