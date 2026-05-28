@@ -30,6 +30,9 @@ engines:
     triage:      { provider: mimo, model: mimo-v2.5-pro }
     analyze:     { provider: mimo, model: mimo-v2.5-pro }
     deep_review: { provider: claude_code, model: sonnet }
+    # patch: sonnet balances quality and cost. Switch to haiku for cost-sensitive
+    # repos where routine patches dominate (haiku ~25× cheaper than sonnet).
+    # Per-repo override: engine_overrides.patch: { provider: claude_code, model: haiku }
     patch:       { provider: claude_code, model: sonnet }
     pr_dialog:   { provider: claude_code, model: sonnet }
     patch_multi: { provider: multi_agent }
@@ -47,7 +50,10 @@ cadence:
 # Hard kill-switches. When a task or day exceeds the cap, the supervisor
 # refuses to start new runs until the next reset.
 cost_caps:
-  per_task_usd: 5.0      # max spend on a single task across all lanes
+  # Hard kill for a single run via Claude Code's --max-budget-usd flag.
+  # Setting this to ~2.5× the per-run target catches outlier loops without
+  # aborting legitimate patches. Raise per repo if tasks are complex.
+  per_task_usd: 0.50     # max spend on a single task across all lanes
   per_day_usd: 50.0      # max total daily spend across all repos
 
 # ── Rate-limit cooldown ────────────────────────────────────────────────────

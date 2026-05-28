@@ -4,6 +4,15 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Patch lane — cost reduction (issue #30)
+
+- **Lower `per_task_usd` default** from `$5.00` to `$0.50`. Claude Code's `--max-budget-usd` flag enforces this inside the binary, so a runaway agent loop (the root cause of the $2–$3 runs) cannot spend more than the cap per issue.
+- **Issue-body truncation.** New per-repo config key `patch_body_max_chars` (default `12000`) trims the combined issue body + analyst expansion before the patch prompt is rendered. Long bodies were the primary driver of inflated input-token counts. A marker `[… body truncated …]` is appended so the agent knows context was cut.
+- **Cost breakdown logging.** `runJob` now emits a single structured `console.log` line after every successful run: `[run:<id>] <lane> <engine>/<model> tokens_in=… tokens_out=… cost=$…`. This satisfies the observability acceptance criterion. The data was already written to DB and JSONL logs; the console line makes it visible in service logs without an additional query.
+- **Example config updated.** `config/openronin.example.yaml` documents the new `per_task_usd`, adds a `haiku` comment under `engines.defaults.patch` for cost-sensitive repos (~25× cheaper than `sonnet`), and documents how to set a per-repo model override.
+
+
+
 ### Director — UX audit follow-through (Wave 1 + Wave 2 + Wave 3 polish)
 
 A 12-PR sweep that grew out of an audit looking at how the Director feels to operate. Goal: stop feeling like a JSON robot, start feeling like a PM who's actually on call. Schema bumped from **v13 → v17**; 167 → 170 unit tests.

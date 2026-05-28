@@ -70,7 +70,11 @@ export const GlobalConfigSchema = z
     cadence: CadenceSchema,
     cost_caps: z
       .object({
-        per_task_usd: z.number().nonnegative().default(5.0),
+        // Hard kill-switch per task. Claude Code's --max-budget-usd flag
+        // enforces this inside the binary, so a runaway agent loop cannot
+        // spend more than this per issue. Keep well below 20× the median
+        // target to catch outliers without aborting legitimate patches.
+        per_task_usd: z.number().nonnegative().default(0.5),
         per_day_usd: z.number().nonnegative().default(50.0),
       })
       .default({}),
@@ -145,6 +149,10 @@ export const RepoConfigSchema = z.object({
     .array(z.string())
     .default([".github/workflows/", "package-lock.json", "pnpm-lock.yaml", "Cargo.lock", "go.sum"]),
   max_diff_lines: z.number().int().positive().default(500),
+  // Maximum characters of the issue/PR body (after analyst expansion) included
+  // in the patch prompt. Long bodies are the primary driver of input-token cost.
+  // Text beyond this limit is trimmed before the template is rendered.
+  patch_body_max_chars: z.number().int().positive().default(12000),
   draft_pr: z.boolean().default(true),
   // patch_multi (L6) — multi-agent patch with coder + reviewer critique loop
   patch_multi_max_critique_iterations: z.number().int().min(0).max(5).default(2),
