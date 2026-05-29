@@ -228,10 +228,21 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
         const kickBtn =
           `<button type="button" hx-post="/admin/api/drain-now" hx-target="#dash-flash" hx-swap="innerHTML"` +
           ` class="btn btn-ghost btn-sm px-2 ml-1" title="Drain queue now">↻</button>`;
+        const busyAge =
+          w.busy && w.lastStartedAt
+            ? (() => {
+                const age = runAge(w.lastStartedAt);
+                const stale = isStaleRun(w.lastStartedAt);
+                return (
+                  `<span class="text-xs ${stale ? "text-yellow-600 font-semibold" : "text-blue-600"}" title="drain started ${escapeHtml(w.lastStartedAt)}">` +
+                  `${escapeHtml(age)}${stale ? " stale" : ""}</span>`
+                );
+              })()
+            : "";
         return (
           `<li class="flex items-center gap-2 py-1.5 border-b border-subtle last:border-0">` +
           `${dot}<code class="text-xs flex-1 min-w-0 truncate">${escapeHtml(w.repoKey)}</code>` +
-          `${lastTs}${kickBtn}</li>`
+          `${busyAge}${lastTs}${kickBtn}</li>`
         );
       })
       .join("");
@@ -735,7 +746,16 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                 <td class="px-3 py-2 text-xs">${r.lane}</td>
                 <td class="px-3 py-2 text-xs text-muted">${r.engine}/${r.model ?? "?"}</td>
                 <td class="px-3 py-2">
-                  ${badge({ label: r.status, tone: runStatusTone(r.status) })}
+                  ${r.status === "running"
+                    ? html`${badge({
+                          label: r.status,
+                          tone: isStaleRun(r.started_at) ? "warning" : "info",
+                        })}
+                        <span class="text-xs text-muted ml-1">for ${runAge(r.started_at)}</span
+                        >${isStaleRun(r.started_at)
+                          ? raw(' <span class="text-xs font-semibold text-yellow-600">stale</span>')
+                          : raw("")}`
+                    : badge({ label: r.status, tone: runStatusTone(r.status) })}
                 </td>
                 <td class="px-3 py-2 text-xs text-muted">
                   ${r.tokens_in ?? "—"}/${r.tokens_out ?? "—"}
@@ -3166,7 +3186,17 @@ ${decisionPretty}</pre
                 <td class="px-2 py-2 text-xs">${r.lane}</td>
                 <td class="px-2 py-2 text-xs">${r.engine}/${r.model ?? "?"}</td>
                 <td class="px-2 py-2">
-                  ${badge({ label: r.status, tone: runStatusTone(r.status) })}
+                  ${r.status === "running"
+                    ? html`${badge({
+                          label: r.status,
+                          tone: isStaleRun(r.started_at) ? "warning" : "info",
+                        })}
+                        <span class="text-xs text-muted ml-1" title="started ${r.started_at}"
+                          >for ${runAge(r.started_at)}</span
+                        >${isStaleRun(r.started_at)
+                          ? raw(' <span class="text-xs font-semibold text-yellow-600">stale</span>')
+                          : raw("")}`
+                    : badge({ label: r.status, tone: runStatusTone(r.status) })}
                 </td>
                 <td class="px-2 py-2 text-xs">${r.repo ?? "—"}</td>
                 <td class="px-2 py-2 text-xs whitespace-nowrap">
@@ -4401,6 +4431,19 @@ function runStatusTone(status: string): BadgeTone {
   if (status === "running") return "info";
   if (status === "error") return "danger";
   return "neutral";
+}
+
+function runAge(startedAt: string): string {
+  const sec = Math.max(0, Math.floor((Date.now() - parseSqliteUtc(startedAt).getTime()) / 1000));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function isStaleRun(startedAt: string): boolean {
+  const thresholdMs =
+    parseInt(process.env.OPENRONIN_STALE_RUN_THRESHOLD_MINUTES ?? "30", 10) * 60_000;
+  return Date.now() - parseSqliteUtc(startedAt).getTime() > thresholdMs;
 }
 
 function taskStatusClass(status: string): string {
