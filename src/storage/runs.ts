@@ -164,6 +164,42 @@ export interface LatencyRow {
   runs: number;
 }
 
+export interface LaneLatencyRow {
+  lane: string;
+  avg_seconds: number;
+  runs: number;
+}
+
+export function getAvgLatencyByLane(db: Db, sinceIso: string): LaneLatencyRow[] {
+  return db
+    .prepare(
+      `SELECT lane,
+              AVG((julianday(finished_at) - julianday(started_at)) * 86400) AS avg_seconds,
+              COUNT(*) AS runs
+       FROM runs WHERE finished_at IS NOT NULL AND started_at >= ?
+       GROUP BY lane ORDER BY avg_seconds DESC`,
+    )
+    .all(sinceIso) as LaneLatencyRow[];
+}
+
+export interface LaneErrorRateRow {
+  lane: string;
+  error_rate: number;
+  total: number;
+}
+
+export function getErrorRateByLane(db: Db, sinceIso: string): LaneErrorRateRow[] {
+  return db
+    .prepare(
+      `SELECT lane,
+              SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS error_rate,
+              COUNT(*) AS total
+       FROM runs WHERE started_at >= ?
+       GROUP BY lane ORDER BY error_rate DESC`,
+    )
+    .all(sinceIso) as LaneErrorRateRow[];
+}
+
 export function getAvgLatencyByModel(db: Db, sinceIso: string): LatencyRow[] {
   return db
     .prepare(
