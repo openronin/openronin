@@ -22,6 +22,8 @@ import {
   getTasksPerDay,
   getSuccessRateByLane,
   getAvgLatencyByModel,
+  getAvgLatencyByLane,
+  getErrorRateByLane,
   getTokensPerDay,
 } from "../storage/runs.js";
 import { listPendingJiraTasks, listPendingTodoistTasks } from "../storage/tasks.js";
@@ -3001,6 +3003,8 @@ ${decisionPretty}</pre
       tasksPerDay: getTasksPerDay(db, since30d),
       successRate: getSuccessRateByLane(db, since12w),
       latency: getAvgLatencyByModel(db, since30d),
+      latencyByLane: getAvgLatencyByLane(db, since30d),
+      errorRateByLane: getErrorRateByLane(db, since30d),
       tokens: getTokensPerDay(db, since30d),
     });
   });
@@ -3027,6 +3031,47 @@ ${decisionPretty}</pre
           Success rate by lane (per week, last 12 weeks)
         </h2>
         <canvas id="chart-success-rate"></canvas>
+      </div>
+
+      <div class="grid grid-cols-2 gap-6 mb-6">
+        <div class="bg-elevated rounded shadow-sm border">
+          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">
+            Avg latency by lane (last 30 days)
+          </h2>
+          <table class="w-full text-sm">
+            <thead class="text-left text-muted text-xs bg-surface">
+              <tr>
+                <th class="px-3 py-2">Lane</th>
+                <th class="px-3 py-2">Avg duration</th>
+                <th class="px-3 py-2">Runs</th>
+              </tr>
+            </thead>
+            <tbody id="latency-lane-table">
+              <tr>
+                <td colspan="3" class="px-3 py-4 text-muted text-xs">Loading…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="bg-elevated rounded shadow-sm border">
+          <h2 class="text-sm font-semibold px-3 py-2 border-b bg-surface">
+            Error rate by lane (last 30 days)
+          </h2>
+          <table class="w-full text-sm">
+            <thead class="text-left text-muted text-xs bg-surface">
+              <tr>
+                <th class="px-3 py-2">Lane</th>
+                <th class="px-3 py-2">Error rate</th>
+                <th class="px-3 py-2">Total runs</th>
+              </tr>
+            </thead>
+            <tbody id="error-rate-table">
+              <tr>
+                <td colspan="3" class="px-3 py-4 text-muted text-xs">Loading…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div class="bg-elevated rounded shadow-sm border mb-6">
@@ -3107,6 +3152,32 @@ ${decisionPretty}</pre
           }
         }
       });
+
+      var laneLatTbody = document.getElementById('latency-lane-table');
+      if (!d.latencyByLane.length) {
+        laneLatTbody.innerHTML = '<tr><td colspan="3" class="px-3 py-4 text-muted text-xs">no data</td></tr>';
+      } else {
+        laneLatTbody.innerHTML = d.latencyByLane.map(function(r) {
+          var secs = r.avg_seconds != null ? r.avg_seconds.toFixed(1) + 's' : '—';
+          return '<tr class="border-t">' +
+            '<td class="px-3 py-2 text-sm font-mono">' + r.lane + '</td>' +
+            '<td class="px-3 py-2 text-sm font-mono">' + secs + '</td>' +
+            '<td class="px-3 py-2 text-sm text-muted">' + r.runs + '</td></tr>';
+        }).join('');
+      }
+
+      var errTbody = document.getElementById('error-rate-table');
+      if (!d.errorRateByLane.length) {
+        errTbody.innerHTML = '<tr><td colspan="3" class="px-3 py-4 text-muted text-xs">no data</td></tr>';
+      } else {
+        errTbody.innerHTML = d.errorRateByLane.map(function(r) {
+          var pct = r.error_rate != null ? (r.error_rate * 100).toFixed(1) + '%' : '—';
+          return '<tr class="border-t">' +
+            '<td class="px-3 py-2 text-sm font-mono">' + r.lane + '</td>' +
+            '<td class="px-3 py-2 text-sm font-mono">' + pct + '</td>' +
+            '<td class="px-3 py-2 text-sm text-muted">' + r.total + '</td></tr>';
+        }).join('');
+      }
 
       var tbody = document.getElementById('latency-table');
       if (!d.latency.length) {
