@@ -3205,7 +3205,10 @@ ${decisionPretty}</pre
   // -------- Logs (run viewer) --------
   app.get("/logs", (c) => {
     const qp = (key: string) => c.req.query(key);
+    const taskIdRaw = qp("taskId");
+    const taskIdNum = taskIdRaw ? parseInt(taskIdRaw, 10) : undefined;
     const filter = {
+      taskId: taskIdNum != null && !isNaN(taskIdNum) ? taskIdNum : undefined,
       lane: qp("lane") || undefined,
       engine: qp("engine") || undefined,
       model: qp("model") || undefined,
@@ -3215,6 +3218,7 @@ ${decisionPretty}</pre
       dateTo: qp("dateTo") || undefined,
       errorSearch: qp("errorSearch") || undefined,
     };
+    const filterStr = { ...filter, taskId: taskIdRaw || undefined };
     const page_ = Math.max(1, parseInt(qp("page") ?? "1", 10) || 1);
     const limit = 50;
     const offset = (page_ - 1) * limit;
@@ -3223,7 +3227,7 @@ ${decisionPretty}</pre
     const rows = hasMore ? runs.slice(0, limit) : runs;
     const distincts = getRunDistincts(db);
     const htmx = isHtmx(c.req.raw.headers);
-    const hasFilter = Object.values(filter).some(Boolean);
+    const hasFilter = Object.values(filterStr).some(Boolean);
 
     const selOpts = (list: string[], current: string | undefined, all = "all") =>
       raw(
@@ -3319,7 +3323,7 @@ ${decisionPretty}</pre
       <div class="flex gap-3 items-center mt-3 text-sm">
         ${page_ > 1
           ? html`<a
-              href="/admin/logs?${buildQueryString({ ...filter, page: String(page_ - 1) })}"
+              href="/admin/logs?${buildQueryString({ ...filterStr, page: String(page_ - 1) })}"
               class="text-brand hover:underline"
               >&larr; prev</a
             >`
@@ -3327,7 +3331,7 @@ ${decisionPretty}</pre
         <span class="text-muted">page ${page_}</span>
         ${hasMore
           ? html`<a
-              href="/admin/logs?${buildQueryString({ ...filter, page: String(page_ + 1) })}"
+              href="/admin/logs?${buildQueryString({ ...filterStr, page: String(page_ + 1) })}"
               class="text-brand hover:underline"
               >next &rarr;</a
             >`
@@ -3450,6 +3454,22 @@ ${decisionPretty}</pre
         <div class="flex flex-col gap-1">
           <label class="form-label">To</label>
           <input type="date" name="dateTo" value="${filter.dateTo ?? ""}" class="form-input" />
+        </div>
+        <div class="flex flex-col gap-1 w-24">
+          <label class="form-label">Task ID</label>
+          <input
+            type="number"
+            name="taskId"
+            value="${taskIdRaw ?? ""}"
+            placeholder="e.g. 42"
+            class="form-input"
+            hx-get="/admin/logs"
+            hx-include="closest form"
+            hx-target="#logs-table-wrap"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            hx-trigger="input changed delay:400ms"
+          />
         </div>
         <div class="flex flex-col gap-1 flex-1 min-w-36">
           <label class="form-label">Error search</label>

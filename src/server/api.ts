@@ -9,6 +9,9 @@ import {
   getCostGroupedByEngine,
   getCostGroupedByRepo,
   getCostUsdSince,
+  listRunsFiltered,
+  countRunsFiltered,
+  getRunById,
 } from "../storage/runs.js";
 import { GithubVcsProvider } from "../providers/github.js";
 import { isPaused } from "../lib/pause.js";
@@ -249,6 +252,40 @@ export function apiRoute({ db, getConfig }: Args): Hono {
       by_engine: getCostGroupedByEngine(db, iso),
       by_repo: getCostGroupedByRepo(db, iso),
     });
+  });
+
+  // GET /api/runs?lane=&status=&task_id=&repo=&dateFrom=&dateTo=&limit=&offset=
+  app.get("/runs", (c) => {
+    const taskIdRaw = c.req.query("task_id");
+    const taskId = taskIdRaw ? parseInt(taskIdRaw, 10) : undefined;
+    const limit = Math.min(parseInt(c.req.query("limit") ?? "50") || 50, 200);
+    const offset = Math.max(0, parseInt(c.req.query("offset") ?? "0") || 0);
+    const filter = {
+      taskId: taskId != null && !isNaN(taskId) ? taskId : undefined,
+      lane: c.req.query("lane") || undefined,
+      status: c.req.query("status") || undefined,
+      repo: c.req.query("repo") || undefined,
+      dateFrom: c.req.query("dateFrom") || undefined,
+      dateTo: c.req.query("dateTo") || undefined,
+      limit,
+      offset,
+    };
+    const runs = listRunsFiltered(db, filter);
+    const total = countRunsFiltered(db, filter);
+    return c.json({ runs, total, limit, offset });
+  });
+
+  // GET /api/runs/:id
+  app.get("/runs/:id", (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    if (isNaN(id)) {
+      return c.json({ error: { code: "bad_request", message: "Invalid run id" } }, 400);
+    }
+    const run = getRunById(db, id);
+    if (!run) {
+      return c.json({ error: { code: "not_found", message: "Run not found" } }, 404);
+    }
+    return c.json({ run });
   });
 
   // POST /api/issues

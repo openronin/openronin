@@ -4,6 +4,13 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Observability — run timeline API and task-filter in logs UI (issue #38)
+
+- **`GET /api/runs`** — new REST endpoint for programmatic access to run logs. Supports filtering by `task_id`, `lane`, `status`, `repo`, `dateFrom`, `dateTo`, `limit`, and `offset`. Returns `{ runs, total, limit, offset }` so clients can paginate. Requires bearer token (`OPENRONIN_API_TOKEN`).
+- **`GET /api/runs/:id`** — fetch a single run record by ID.
+- **Task ID filter in `/admin/logs`** — a new "Task ID" numeric input in the logs filter bar lets operators jump directly to all runs for a specific task without navigating through the task detail page.
+- **`RunFilter.taskId`** — the underlying `listRunsFiltered` / `countRunsFiltered` storage helpers now support filtering by task ID.
+
 ### Patch lane — cost reduction (issue #30)
 
 - **Lower `per_task_usd` default** from `$5.00` to `$0.50`. Claude Code's `--max-budget-usd` flag enforces this inside the binary, so a runaway agent loop (the root cause of the $2–$3 runs) cannot spend more than the cap per issue.
