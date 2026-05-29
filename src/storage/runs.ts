@@ -231,6 +231,7 @@ export function getTokensPerDay(db: Db, sinceIso: string): TokensPerDay[] {
 }
 
 export interface RunFilter {
+  taskId?: number;
   lane?: string;
   engine?: string;
   model?: string;
@@ -250,6 +251,10 @@ export interface RunRowWithRepo extends RunRow {
 function buildRunFilter(filter: RunFilter): { where: string; params: (string | number)[] } {
   const conditions: string[] = [];
   const params: (string | number)[] = [];
+  if (filter.taskId != null) {
+    conditions.push("ru.task_id = ?");
+    params.push(filter.taskId);
+  }
   if (filter.lane) {
     conditions.push("ru.lane = ?");
     params.push(filter.lane);
@@ -303,6 +308,20 @@ export function listRunsFiltered(db: Db, filter: RunFilter): RunRowWithRepo[] {
        LIMIT ? OFFSET ?`,
     )
     .all(...params, limit, offset) as RunRowWithRepo[];
+}
+
+export function countRunsFiltered(db: Db, filter: RunFilter): number {
+  const { where, params } = buildRunFilter(filter);
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n
+       FROM runs ru
+       LEFT JOIN tasks t ON t.id = ru.task_id
+       LEFT JOIN repos r ON r.id = t.repo_id
+       ${where}`,
+    )
+    .get(...params) as { n: number };
+  return row.n;
 }
 
 export interface RunDistincts {
