@@ -52,9 +52,9 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
-    "@types/node": "^25.9.1",
-    "oxfmt": "^0.51.0",
-    "oxlint": "^1.66.0",
+    "@types/node": "^25.9.2",
+    "oxfmt": "^0.53.0",
+    "oxlint": "^1.68.0",
     "typescript": "^6.0.3"
   },
   "engines": {
