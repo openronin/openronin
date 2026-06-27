@@ -163,7 +163,7 @@ function mapPermission(policy: NonNullable<EngineRunOptions["tools"]>): string {
   switch (policy) {
     case "read-write":
     case "git-write":
-      return "acceptEdits";
+      return "bypassPermissions";
     default:
       return "default";
   }
