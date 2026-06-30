@@ -4,6 +4,25 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Observability — per-lane latency and error-rate metrics (issue #88)
+
+- The cost dashboard / metrics view now surfaces **p50 and p95 latency per lane** and **error rate per lane** so operators can spot which lane is slowest or failing most without grepping raw logs. Data is aggregated from the existing `runs` table; no schema change.
+
+### Observability — running-run age and stale highlight in admin UI
+
+- `/admin/logs` and the dashboard recent-runs table show **"running for Nm Ss"** next to the status badge for runs still in `status='running'`.
+- Runs that exceed the configurable threshold are flagged with a **"stale"** label and a warning-tone badge so the operator can spot hangs without SSH.
+- The `/api/workers` panel similarly shows how long the current drain worker has been busy, with the same stale colouring.
+- **New env var** `OPENRONIN_STALE_RUN_THRESHOLD_MINUTES` (default `30`) — already documented in `.env.example`.
+- Crash-recovered runs already land in `status='error'` with `[crash recovery: orphaned run, process exited mid-call]` via `recoverStuckTasks()`; that text is shown beneath each run in the UI (no schema change).
+
+### Fixed — scheduler: lift transient pr_branches parks on human webhook events
+
+- `TERMINAL_BRANCH_STATUSES` split into two cohorts:
+  - **`TRANSIENT_PARK_STATUSES`** (`error`, `dirty`): caused by infra/agent failure. A verified non-bot comment on the parent issue lifts the `pr_branches` row to `'cancelled'` in the GitHub webhook handler, so `pickLane` can re-route the task on the next drain without operator SQLite surgery.
+  - **Human-gated parks** (`guardrail_blocked`, `no_changes`, `needs_human`): unchanged — still lifted only by admin Retry, label removal, or the 24h TTL.
+- Loop-safety: the lift only fires when `candidateBody` is non-empty and `kind === "issue"`. Label/edit webhook events carry no body text, so the bot's own `in_progress_label` removal in `src/lanes/patch.ts` finalize cannot trigger a re-run loop.
+
 ### Reliability — digest retry backoff and graceful fallback (issue #79)
 
 - **Schema v20** adds `digest_failure_count` + `digest_next_attempt_at` columns to `director_budget_state` so digest failures can be backed off without keeping the loop in a tight retry storm.
