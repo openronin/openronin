@@ -4,6 +4,12 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Reliability — crash recovery audit and richer healthz (issue #39)
+
+- **Recovery audit file.** Every boot, `recoverStuckTasks` now writes a small JSON summary to `$OPENRONIN_DATA_DIR/recovery/last.json` (atomic write-then-rename) capturing `ts`, `recovered`, per-table counts (`tasks`, `runs`, `deploys`), and a `clean_shutdown` flag. The healthz endpoint reads it back so external monitors can answer "what did the last boot recover?" without poking the DB.
+- **`GET /healthz` enriched.** Response gains `active_runs` (rows in `runs.status='running'`), `queued_runs` (due tasks per `queueStats`), and a `last_recovery` block exposing the audit above with an `age_sec` field. The endpoint now returns HTTP **503** when the DB query fails (`status: "down"`); the OK path remains 200 with `status: "ok"`. Internal helpers around it are factored out as `buildHealthz()` so tests can assert response shape directly.
+- The existing SIGTERM/SIGINT graceful shutdown (`scheduler.stop`) and the `recoverStuckTasks` startup sweep (which resets orphaned `runs`/`tasks`/`deploys` rows and abandons tasks that crash-loop 3× in a row) are unchanged — this change makes their outcomes visible.
+
 ### Observability — run timeline API and task-filter in logs UI (issue #38)
 
 - **`GET /api/runs`** — new REST endpoint for programmatic access to run logs. Supports filtering by `task_id`, `lane`, `status`, `repo`, `dateFrom`, `dateTo`, `limit`, and `offset`. Returns `{ runs, total, limit, offset }` so clients can paginate. Requires bearer token (`OPENRONIN_API_TOKEN`).

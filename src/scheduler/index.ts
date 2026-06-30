@@ -3,6 +3,7 @@ import type { RuntimeConfig } from "../config/schema.js";
 import { reconcileRepo, reconcileJiraTracker, type ReconcileResult } from "./reconcile.js";
 import { drainRepo, type WorkResult } from "./worker.js";
 import { ensureRepo } from "../storage/tasks.js";
+import { writeRecoveryReport } from "../storage/recovery.js";
 
 export interface SchedulerOptions {
   reconcileIntervalMs: number;
@@ -50,7 +51,10 @@ export interface SchedulerHandle {
 // Also close orphaned runs: when SIGTERM kills mid-engine-call, finishRun()
 // never gets a chance to flip the row to ok/error, so it stays 'running'
 // forever and confuses /admin and cost dashboards.
-export function recoverStuckTasks(db: Db): { tasks: number; runs: number; deploys: number } {
+export function recoverStuckTasks(
+  db: Db,
+  opts: { dataDir?: string } = {},
+): { tasks: number; runs: number; deploys: number } {
   // First: any task with 3+ accumulated 'crash recovery' stamps in last_error
   // is being killed every time it tries to start. Stop the loop — abandon
   // it with a far-future next_due_at and a 'done' status. Operator can
@@ -106,15 +110,32 @@ export function recoverStuckTasks(db: Db): { tasks: number; runs: number; deploy
   } catch {
     // deploys table may not exist on very old schemas; ignore.
   }
-  if (
+  const anyRecovered =
     abandoned.changes > 0 ||
     recoveredTasks.changes > 0 ||
     recoveredRuns.changes > 0 ||
-    recoveredDeploys.changes > 0
-  ) {
+    recoveredDeploys.changes > 0;
+  if (anyRecovered) {
     console.log(
       `[recovery] abandoned ${abandoned.changes}, reset ${recoveredTasks.changes} task(s) running→pending, ${recoveredRuns.changes} run(s) running→error, ${recoveredDeploys.changes} deploy(s) running→error`,
     );
+  }
+  // Persist a small audit so the operator (and /healthz) can answer
+  // "did the last boot recover anything?" without re-querying the tables
+  // (which the recovery pass itself just rewrote).
+  if (opts.dataDir) {
+    try {
+      writeRecoveryReport(opts.dataDir, {
+        ts: new Date().toISOString(),
+        recovered: anyRecovered,
+        tasks: recoveredTasks.changes,
+        runs: recoveredRuns.changes,
+        deploys: recoveredDeploys.changes,
+        clean_shutdown: !anyRecovered,
+      });
+    } catch (error) {
+      console.error("[recovery] failed to write recovery report:", error);
+    }
   }
   return {
     tasks: recoveredTasks.changes,
@@ -129,7 +150,7 @@ export function startScheduler(
   options: Partial<SchedulerOptions> = {},
 ): SchedulerHandle {
   const opts = { ...DEFAULT_OPTIONS, ...options };
-  recoverStuckTasks(db);
+  recoverStuckTasks(db, { dataDir: getConfig().dataDir });
   let reconcileBusy = false;
   let stopped = false;
 
