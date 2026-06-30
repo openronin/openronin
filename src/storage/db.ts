@@ -458,4 +458,21 @@ function applyMigrationsInner(db: Db): void {
       "INSERT INTO schema_version (version, applied_at) VALUES (18, datetime('now'))",
     ).run();
   }
+
+  // v20 — Digest retry backoff. Before this, runDigest only persisted
+  // last_digest_date on success; a failure left it stale, so the service
+  // loop's shouldRunDigest predicate kept firing the digest every 10s for
+  // hours (see issue #79: ~25 'Not supported model' errors in 5 minutes).
+  // digest_failure_count tracks consecutive failures and feeds an
+  // exponential backoff; digest_next_attempt_at is the earliest UTC
+  // ISO timestamp the predicate will allow a retry. Both reset on success.
+  if (current < 20) {
+    db.exec(`
+      ALTER TABLE director_budget_state ADD COLUMN digest_failure_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE director_budget_state ADD COLUMN digest_next_attempt_at TEXT;
+    `);
+    db.prepare(
+      "INSERT INTO schema_version (version, applied_at) VALUES (20, datetime('now'))",
+    ).run();
+  }
 }

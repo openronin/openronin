@@ -19,7 +19,7 @@ import { ensureBudgetState, rolloverDayIfNeeded } from "./budget.js";
 import { appendMessage, unansweredUserDirectives } from "./chat.js";
 import { runTick, type TickReason } from "./tick.js";
 import { releaseTick, tryAcquireTick } from "./active-tick.js";
-import { getLastDigestDate, runDigest, shouldRunDigest } from "./digest.js";
+import { getDigestRetryState, runDigest, shouldRunDigest } from "./digest.js";
 import { maybePostTrustRampSuggestion } from "./trust-ramp.js";
 import { expireStalePending } from "./decisions.js";
 import { runOutcomeFollowupSweep } from "./outcome-followup.js";
@@ -157,9 +157,11 @@ function sleep(ms: number): Promise<void> {
 async function maybeRunDigest(db: Db, target: RepoLookup, dataDir: string): Promise<void> {
   // Digest fires at most once per local-TZ day per repo. shouldRunDigest is
   // pure — it checks the configured hour against the current wall-clock in
-  // the configured TZ, plus the persisted last-digest-date string.
-  const last = getLastDigestDate(db, target.repoId);
-  if (!shouldRunDigest(target.director.digest, last)) return;
+  // the configured TZ, plus the persisted last-digest-date string. The
+  // next_attempt_at value implements the exponential backoff that gates
+  // retries after a transient failure (see issue #79).
+  const { lastDate, nextAttemptAt } = getDigestRetryState(db, target.repoId);
+  if (!shouldRunDigest(target.director.digest, lastDate, new Date(), nextAttemptAt)) return;
   // Use the same per-repo lock as planning ticks so a digest doesn't
   // race with a chat-triggered planning tick.
   if (!tryAcquireTick(db, target.repoId, "morning_digest")) return;
