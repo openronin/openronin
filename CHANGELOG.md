@@ -4,6 +4,13 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Reliability — digest retry backoff and graceful fallback (issue #79)
+
+- **Schema v20** adds `digest_failure_count` + `digest_next_attempt_at` columns to `director_budget_state` so digest failures can be backed off without keeping the loop in a tight retry storm.
+- **Exponential backoff on transient digest failures.** Previously `runDigest` left `last_digest_date` untouched on error; the service loop (10s wake) then fired the digest every 10s for the rest of the day. With a stuck MIMO model name this produced ~25 `MIMO error 400: Not supported model` log lines in a 5-minute window. Backoff is **1m → 2m → 4m → … → capped at 1h**; `shouldRunDigest` honours `digest_next_attempt_at` and refuses to fire before it. A success resets the counter and clears the deadline.
+- **Permanent-error fallback.** A digest error matching `Not supported model` is now classified as terminal-for-today: ONE chat notification ("digest unavailable — set OPENRONIN_DIRECTOR_DIGEST_MODEL to a valid model") is posted, `last_digest_date` is set to today so the predicate stops firing, and the failure counter is reset. Tomorrow's wake-up tries again — by which time the operator has had a chance to fix the model name.
+- **New public helpers** in `src/director/digest.ts`: `getDigestRetryState`, `computeDigestBackoffMs`, `isUnsupportedModelError`. The legacy `getLastDigestDate` is preserved as a thin wrapper for back-compat.
+
 ### Reliability — crash recovery audit and richer healthz (issue #39)
 
 - **Recovery audit file.** Every boot, `recoverStuckTasks` now writes a small JSON summary to `$OPENRONIN_DATA_DIR/recovery/last.json` (atomic write-then-rename) capturing `ts`, `recovered`, per-table counts (`tasks`, `runs`, `deploys`), and a `clean_shutdown` flag. The healthz endpoint reads it back so external monitors can answer "what did the last boot recover?" without poking the DB.

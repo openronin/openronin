@@ -69,15 +69,23 @@ export function localHourInTz(d: Date, tz: string): number {
 // Returns true when:
 //   • digest.enabled, AND
 //   • we're past the configured hour today in the configured timezone, AND
-//   • we haven't already fired a digest for today's local date.
+//   • we haven't already fired a digest for today's local date, AND
+//   • we're past the backoff deadline (or no backoff is active).
 //
 // `now` is injectable for tests; production passes `new Date()`.
+// `nextAttemptAt` is the UTC ISO timestamp written by a prior failed
+// attempt's exponential backoff — null means no backoff active.
 export function shouldRunDigest(
   digest: DigestConfig,
   lastDigestDate: string | null,
   now: Date = new Date(),
+  nextAttemptAt: string | null = null,
 ): boolean {
   if (!digest.enabled) return false;
+  if (nextAttemptAt) {
+    const next = Date.parse(nextAttemptAt);
+    if (!Number.isNaN(next) && now.getTime() < next) return false;
+  }
   const hour = localHourInTz(now, digest.timezone);
   if (hour < digest.hour) return false;
   const today = localDateInTz(now, digest.timezone);
@@ -85,7 +93,7 @@ export function shouldRunDigest(
 }
 
 // Persist that we've fired today's digest. Called after a successful run
-// (and skipped on failure so we'll retry on the next loop pass).
+// (and skipped on transient failure so we'll retry after the backoff).
 export function recordDigestFired(db: Db, repoId: number, today: string): void {
   db.prepare(`UPDATE director_budget_state SET last_digest_date = ? WHERE repo_id = ?`).run(
     today,
@@ -94,10 +102,80 @@ export function recordDigestFired(db: Db, repoId: number, today: string): void {
 }
 
 export function getLastDigestDate(db: Db, repoId: number): string | null {
+  return getDigestRetryState(db, repoId).lastDate;
+}
+
+// Read both the last fired date AND the backoff state for the digest.
+// shouldRunDigest needs both — the predicate gates on either of them being
+// "already done for today" or "still within backoff window".
+export function getDigestRetryState(
+  db: Db,
+  repoId: number,
+): { lastDate: string | null; nextAttemptAt: string | null; failureCount: number } {
   const row = db
-    .prepare(`SELECT last_digest_date FROM director_budget_state WHERE repo_id = ?`)
-    .get(repoId) as { last_digest_date: string | null } | undefined;
-  return row?.last_digest_date ?? null;
+    .prepare(
+      `SELECT last_digest_date, digest_next_attempt_at, digest_failure_count
+       FROM director_budget_state WHERE repo_id = ?`,
+    )
+    .get(repoId) as
+    | {
+        last_digest_date: string | null;
+        digest_next_attempt_at: string | null;
+        digest_failure_count: number | null;
+      }
+    | undefined;
+  return {
+    lastDate: row?.last_digest_date ?? null,
+    nextAttemptAt: row?.digest_next_attempt_at ?? null,
+    failureCount: row?.digest_failure_count ?? 0,
+  };
+}
+
+// Exponential backoff for the digest retry loop. Starts at 1 minute,
+// doubles each failure, capped at 1 hour. The cap is intentional: a stuck
+// MIMO model name shouldn't produce more than one error message per hour
+// (cf. issue #79: ~25 errors in 5 min).
+const DIGEST_BACKOFF_BASE_MS = 60_000;
+const DIGEST_BACKOFF_MAX_MS = 60 * 60_000;
+
+export function computeDigestBackoffMs(failureCount: number): number {
+  const exponent = Math.max(0, failureCount - 1);
+  const ms = DIGEST_BACKOFF_BASE_MS * 2 ** exponent;
+  return Math.min(ms, DIGEST_BACKOFF_MAX_MS);
+}
+
+// Classify a digest error message as "retrying won't help today" — typically
+// MIMO rejecting the configured model with HTTP 400. The digest then skips
+// for the rest of the day rather than burning backoff slots on a request
+// that will fail identically every time.
+export function isUnsupportedModelError(detail: string): boolean {
+  return /not supported model/i.test(detail);
+}
+
+function recordDigestFailure(
+  db: Db,
+  repoId: number,
+  nextAttemptAt: string,
+): { failureCount: number } {
+  db.prepare(
+    `UPDATE director_budget_state
+     SET digest_failure_count = digest_failure_count + 1,
+         digest_next_attempt_at = ?
+     WHERE repo_id = ?`,
+  ).run(nextAttemptAt, repoId);
+  const row = db
+    .prepare(`SELECT digest_failure_count FROM director_budget_state WHERE repo_id = ?`)
+    .get(repoId) as { digest_failure_count: number };
+  return { failureCount: row.digest_failure_count };
+}
+
+function resetDigestRetryState(db: Db, repoId: number): void {
+  db.prepare(
+    `UPDATE director_budget_state
+     SET digest_failure_count = 0,
+         digest_next_attempt_at = NULL
+     WHERE repo_id = ?`,
+  ).run(repoId);
 }
 
 // ── Digest tick runner ──────────────────────────────────────────────────
@@ -165,12 +243,52 @@ export async function runDigest(opts: DigestRunOptions): Promise<DigestRunResult
     });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
+    // Permanent classification: the configured model is rejected by MIMO,
+    // so retrying with the same config will fail identically. Post ONE
+    // notification of unavailability, mark today as fired so the loop
+    // stops retrying for the rest of the day, and reset the backoff state.
+    // Tomorrow's wake-up will attempt again — by then the operator has
+    // had a chance to fix the model name.
+    if (isUnsupportedModelError(detail)) {
+      appendMessage(db, {
+        repoId,
+        role: "system",
+        type: "error",
+        body:
+          `digest unavailable: ${detail}. ` +
+          `Configured digest model is not supported by MIMO — set OPENRONIN_DIRECTOR_DIGEST_MODEL ` +
+          `to a valid model (e.g. mimo-v2.5-pro). Skipping digest for ${today}.`,
+        metadata: {
+          repo: repoKey(repo),
+          kind: "digest",
+          today,
+          classification: "model_unavailable",
+        },
+      });
+      recordDigestFired(db, repoId, today);
+      resetDigestRetryState(db, repoId);
+      return { status: "error", detail, costUsd: 0 };
+    }
+    // Transient failure: bump the failure count, push next_attempt_at out
+    // with exponential backoff, and post a single "failed, will retry"
+    // message. Without this, the service loop would re-invoke runDigest
+    // every 10s until midnight (issue #79).
+    const prior = getDigestRetryState(db, repoId).failureCount;
+    const projected = prior + 1;
+    const nextAttemptMs = now.getTime() + computeDigestBackoffMs(projected);
+    const nextAttemptIso = new Date(nextAttemptMs).toISOString();
+    const { failureCount } = recordDigestFailure(db, repoId, nextAttemptIso);
     appendMessage(db, {
       repoId,
       role: "system",
       type: "error",
-      body: `digest failed: ${detail}`,
-      metadata: { repo: repoKey(repo), kind: "digest" },
+      body: `digest failed (attempt ${failureCount}): ${detail}. Next retry at ${nextAttemptIso}.`,
+      metadata: {
+        repo: repoKey(repo),
+        kind: "digest",
+        failureCount,
+        nextAttemptAt: nextAttemptIso,
+      },
     });
     return { status: "error", detail, costUsd: 0 };
   }
@@ -194,5 +312,6 @@ export async function runDigest(opts: DigestRunOptions): Promise<DigestRunResult
     },
   });
   recordDigestFired(db, repoId, today);
+  resetDigestRetryState(db, repoId);
   return { status: "ok", detail: `digest posted for ${today}`, costUsd: cost };
 }
