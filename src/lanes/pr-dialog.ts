@@ -7,6 +7,7 @@ import { ensureRepo, recordTaskDecision, upsertTask } from "../storage/tasks.js"
 import { bumpIteration, getPrBranchByPrNumber, recordPrBranch } from "../storage/pr-branches.js";
 import { isBotMessage, pick, BOT_PREFIX } from "./messages.js";
 import { parseSqliteUtc } from "../lib/time.js";
+import { extractDeniedBashCommands } from "../engines/claude-code.js";
 import { attemptRebaseResolve } from "./conflict-resolve.js";
 import { bumpConflictResolutions, updateBranchHeadSha } from "../storage/pr-branches.js";
 import { z } from "zod";
@@ -229,8 +230,25 @@ export async function runPrDialog(input: PrDialogInput): Promise<PrDialogResult>
     // 5. Validate worktree + new commits.
     const headSha = await getCurrentSha(workdir);
     const dirty = await diffStats(workdir);
+    // If the CLI denied bash calls that would have committed the edits, the
+    // agent couldn't self-commit no matter how well it worked. Surface this
+    // distinctly so operators can spot sandbox misconfiguration instead of
+    // treating repeated "dirty" / "needs_human" outcomes as normal pushback.
+    const deniedBash = extractDeniedBashCommands(job.result.raw);
+    const gitDenied = deniedBash.some((c) => /^\s*git\s+(add|commit|rebase|push)\b/.test(c));
+    const sandboxNote =
+      gitDenied && deniedBash.length > 0
+        ? ` sandbox blocked ${deniedBash.length} bash call(s) — likely permission-mode misconfiguration; sample: ${deniedBash.slice(0, 3).join(" | ")}`
+        : "";
+    if (gitDenied) {
+      console.warn(
+        `[pr-dialog] PR #${item.number}: agent could not commit — sandbox denied git bash calls. Denials: ${deniedBash.slice(0, 5).join(" | ")}`,
+      );
+    }
     if (dirty.hasChanges) {
-      const detail = `worktree dirty after agent run (${dirty.filesChanged.length} files, +${dirty.linesAdded} -${dirty.linesRemoved}); rejecting.`;
+      const detail =
+        `worktree dirty after agent run (${dirty.filesChanged.length} files, +${dirty.linesAdded} -${dirty.linesRemoved}); rejecting.` +
+        sandboxNote;
       // Don't bump the iteration counter — this isn't a real round; nothing changed
       // in the PR. Only successful pushes count toward the budget.
       recordPrBranch(ctx.db, {
@@ -292,7 +310,7 @@ export async function runPrDialog(input: PrDialogInput): Promise<PrDialogResult>
         branch,
         prNumber: item.number,
         iteration: prRow.iterations + 1,
-        detail: "agent did not commit; explanation posted to PR",
+        detail: "agent did not commit; explanation posted to PR" + sandboxNote,
         agentSummary,
         runId: job.runId,
       };

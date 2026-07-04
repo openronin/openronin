@@ -7,6 +7,17 @@ interface ClaudeCodeEngineOptions {
   defaultModel?: string;
 }
 
+// Structured record of a single tool call the CLI refused to run. The Claude
+// Code CLI emits an array of these on stdout as `permission_denials`.
+export interface PermissionDenial {
+  tool_name?: string;
+  tool_input?: {
+    command?: string;
+    file_path?: string;
+    [key: string]: unknown;
+  };
+}
+
 interface ClaudeJsonResult {
   type?: string;
   subtype?: string;
@@ -17,6 +28,7 @@ interface ClaudeJsonResult {
   result?: string;
   stop_reason?: string;
   total_cost_usd?: number;
+  permission_denials?: PermissionDenial[];
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
@@ -159,11 +171,43 @@ export function parseClaudeResetTime(text: string, now = new Date()): Date | nul
   return reset;
 }
 
-function mapPermission(policy: NonNullable<EngineRunOptions["tools"]>): string {
+// Pull the list of denied bash commands out of a raw Claude Code run payload.
+// Returns an empty array when nothing was denied or the payload isn't shaped
+// like a Claude Code result. Used by lanes to distinguish a sandbox-blocked
+// run (agent tried to `git commit` and was denied) from a legitimate
+// "agent declined to make changes" outcome.
+export function extractDeniedBashCommands(raw: unknown): string[] {
+  const denials = (raw as ClaudeJsonResult | undefined)?.permission_denials;
+  if (!Array.isArray(denials)) return [];
+  const out: string[] = [];
+  for (const d of denials) {
+    if (d?.tool_name !== "Bash") continue;
+    const cmd = d.tool_input?.command;
+    if (typeof cmd === "string" && cmd.length > 0) out.push(cmd);
+  }
+  return out;
+}
+
+// Map the engine-level `tools` policy to Claude Code's `--permission-mode` flag.
+//
+// `acceptEdits` only auto-approves the Edit/Write tool calls. The Bash tool
+// still goes through the normal permission flow, which — in `--print`
+// (non-interactive) mode — has no one to answer the prompt and fails closed:
+// EVERY bash invocation is denied, not just risky ones like `git commit`.
+// Production runs of the `pr_dialog` lane confirmed this: 23/23 bash calls
+// (including read-only `php -v`, `gh --version`, `git fetch`, `cat`) were
+// denied under `acceptEdits`, causing the agent to produce edits it could
+// never commit. See #93 (original report) and #100 (revert-of-revert).
+//
+// `bypassPermissions` is safe here because our worktree is already an
+// isolated, ephemeral, per-task clone; the harness enforces guardrails on
+// the *committed* diff (protected paths, max diff size) independently — those
+// are the real safety boundary, not Claude Code's own interactive prompt.
+export function mapPermission(policy: NonNullable<EngineRunOptions["tools"]>): string {
   switch (policy) {
     case "read-write":
     case "git-write":
-      return "acceptEdits";
+      return "bypassPermissions";
     default:
       return "default";
   }

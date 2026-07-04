@@ -4,6 +4,13 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Fixed — permission mode: revert to `bypassPermissions` for code-mutating lanes (issue #100)
+
+- **`mapPermission()` in `src/engines/claude-code.ts` maps `git-write` and `read-write` back to `bypassPermissions`.** Production evidence from the `pr_dialog` lane showed `acceptEdits` blocks **every** bash tool call in `--print` (headless) mode — including read-only commands like `git status`, `git fetch`, `php -v`, `gh --version` — because with no interactive session to answer the bash approval prompt, the CLI fails closed. This re-applies the fix from #93 (silently reverted after #95's analytical — but wrong — conclusion that "`--print` mode has no bash gate").
+- **New helper `extractDeniedBashCommands(raw)`** on the claude-code engine returns the list of commands the CLI refused, pulled from the raw payload's `permission_denials`.
+- **`src/lanes/pr-dialog.ts` now distinguishes sandbox misconfiguration from legitimate agent pushback.** When the worktree ends up dirty or the agent didn't commit AND the run's denials include `git add|commit|rebase|push`, the lane appends a distinctive `sandbox blocked N bash call(s) — likely permission-mode misconfiguration` note to the run detail and emits a `console.warn` line. Before, the two outcomes were indistinguishable and a misconfigured sandbox could burn budget across repeated iterations undetected.
+- **`docs/PERMISSION_MODE.md` rewritten** to correct the false claim that headless mode has no bash gate and document the actual observed behaviour.
+
 ### Observability — per-lane latency and error-rate metrics (issue #88)
 
 - The cost dashboard / metrics view now surfaces **p50 and p95 latency per lane** and **error rate per lane** so operators can spot which lane is slowest or failing most without grepping raw logs. Data is aggregated from the existing `runs` table; no schema change.

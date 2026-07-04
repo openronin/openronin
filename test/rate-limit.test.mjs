@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { detectClaudeRateLimit, parseClaudeResetTime } from "../dist/engines/claude-code.js";
+import {
+  detectClaudeRateLimit,
+  extractDeniedBashCommands,
+  mapPermission,
+  parseClaudeResetTime,
+} from "../dist/engines/claude-code.js";
 import { RateLimited } from "../dist/engines/types.js";
 
 test("parseClaudeResetTime: 7am Moscow → next 04:00 UTC", () => {
@@ -63,4 +68,31 @@ test("detectClaudeRateLimit: returns null on a normal error", () => {
 
 test("detectClaudeRateLimit: returns null on non-JSON stdout", () => {
   assert.equal(detectClaudeRateLimit("not json"), null);
+});
+
+// Regression for issue #100: acceptEdits blocks bash in --print mode, so
+// code-mutating lanes must use bypassPermissions to actually commit.
+test("mapPermission: git-write and read-write use bypassPermissions", () => {
+  assert.equal(mapPermission("git-write"), "bypassPermissions");
+  assert.equal(mapPermission("read-write"), "bypassPermissions");
+  assert.equal(mapPermission("read-only"), "default");
+});
+
+test("extractDeniedBashCommands: pulls bash commands out of permission_denials", () => {
+  const raw = {
+    permission_denials: [
+      { tool_name: "Bash", tool_input: { command: "git commit -am fix" } },
+      { tool_name: "Read", tool_input: { file_path: "/etc/hostname" } },
+      { tool_name: "Bash", tool_input: { command: "php -v" } },
+      { tool_name: "Bash", tool_input: {} },
+    ],
+  };
+  assert.deepEqual(extractDeniedBashCommands(raw), ["git commit -am fix", "php -v"]);
+});
+
+test("extractDeniedBashCommands: empty / missing / non-object raw", () => {
+  assert.deepEqual(extractDeniedBashCommands(undefined), []);
+  assert.deepEqual(extractDeniedBashCommands({}), []);
+  assert.deepEqual(extractDeniedBashCommands({ permission_denials: [] }), []);
+  assert.deepEqual(extractDeniedBashCommands("not-an-object"), []);
 });
