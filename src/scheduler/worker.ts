@@ -51,6 +51,12 @@ export async function processOne(
     markError(db, task.id, "repo not in current config (unwatched)", 24 * 60 * 60 * 1000);
     return { taskId: task.id, status: "skipped", detail: "repo not in config" };
   }
+  if (repo.hidden) {
+    // Hidden repos are inert: park queued tasks for a day so they don't
+    // burn drain cycles. Un-hiding the repo (or purging it) resolves.
+    markError(db, task.id, "repo is hidden — not processing", 24 * 60 * 60 * 1000);
+    return { taskId: task.id, status: "skipped", detail: "repo hidden" };
+  }
 
   try {
     const provider = new GithubVcsProvider();

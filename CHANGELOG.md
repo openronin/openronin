@@ -4,6 +4,14 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Added — soft-untrack + purge repo lifecycle (issue #104)
+
+- **Two-stage repo removal from the admin UI.** *Untrack* (soft-hide) on `/admin/repos` flips `hidden: true` in the per-repo YAML after the operator types the exact `owner/name` slug; the repo disappears from the main UI and every subsystem stops touching it (scheduler / reconcile / worker / webhooks / Director all skip hidden repos). *Purge* on `/admin/settings/hidden` is irreversible: it requires re-typing the admin Basic-auth credentials (constant-time compared), then deletes the DB row (cascading via FK to tasks / runs / pr_branches / deploys / webhook_secrets / director_*), the per-repo YAML config, the working tree under `work/`, reports, and JSONL run logs, and best-effort removes the webhook on the VCS side.
+- **Schema v21** adds `repos.hidden INTEGER NOT NULL DEFAULT 0`. `syncReposFromConfig` mirrors the YAML `hidden` flag into the column so DB lookups (worker, healthz, dashboards) can consult it locally without re-reading YAML.
+- **`RepoConfigSchema.hidden`** (defaults to `false`) is the source of truth. Restore a hidden repo by editing the YAML back to `hidden: false` — `fs.watch` picks it up.
+- **`VcsProvider.deleteWebhook`** is the new interface method used by purge; both `GithubVcsProvider` and `GitlabVcsProvider` implement it, treating 404 as success for idempotency.
+- **Purge is refused when `ADMIN_UI_PASSWORD` is unset** — an irreversible action must not run without real authentication. The Hidden repos page surfaces a warning in that case.
+
 ### Fixed — permission mode: revert to `bypassPermissions` for code-mutating lanes (issue #100)
 
 - **`mapPermission()` in `src/engines/claude-code.ts` maps `git-write` and `read-write` back to `bypassPermissions`.** Production evidence from the `pr_dialog` lane showed `acceptEdits` blocks **every** bash tool call in `--print` (headless) mode — including read-only commands like `git status`, `git fetch`, `php -v`, `gh --version` — because with no interactive session to answer the bash approval prompt, the CLI fails closed. This re-applies the fix from #93 (silently reverted after #95's analytical — but wrong — conclusion that "`--print` mode has no bash gate").

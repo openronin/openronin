@@ -475,4 +475,17 @@ function applyMigrationsInner(db: Db): void {
       "INSERT INTO schema_version (version, applied_at) VALUES (20, datetime('now'))",
     ).run();
   }
+
+  // v21 — Hidden-repo lifecycle. Adds a boolean `hidden` column that
+  // mirrors the same-named field in per-repo YAML. Purpose: soft-untrack
+  // a repo (invisible in the main UI + ignored by scheduler / reconcile
+  // / webhooks / Director) without wiping history. Purge (permanent
+  // deletion of a hidden repo) is a separate admin action that cascades
+  // via existing FK ON DELETE CASCADE.
+  if (current < 21) {
+    db.exec(`ALTER TABLE repos ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;`);
+    db.prepare(
+      "INSERT INTO schema_version (version, applied_at) VALUES (21, datetime('now'))",
+    ).run();
+  }
 }

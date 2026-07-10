@@ -72,6 +72,10 @@ export function webhooksRoute({ db, getConfig, scheduler }: Args): Hono {
       return repoRow?.id === repoId && expected;
     });
     if (!repoCfg) return c.json({ error: "repo not in config" }, 404);
+    // Repo is soft-untracked (hidden): acknowledge but do nothing.
+    // Returning 200 keeps GitHub from disabling the webhook while the
+    // operator decides whether to purge or restore.
+    if (repoCfg.hidden) return c.json({ status: "ignored", reason: "repo hidden" });
 
     // Handle push events for the deploy lane before issue/PR routing.
     if (event === "push") {
@@ -239,6 +243,7 @@ export function webhooksRoute({ db, getConfig, scheduler }: Args): Hono {
         r.provider === repoRow.provider && r.owner === repoRow.owner && r.name === repoRow.name,
     );
     if (!repoCfg) return c.json({ error: "repo not in config" }, 404);
+    if (repoCfg.hidden) return c.json({ status: "ignored", reason: "repo hidden" });
 
     const dbRepoId = ensureRepo(db, {
       provider: repoCfg.provider,
@@ -274,6 +279,7 @@ export function webhooksRoute({ db, getConfig, scheduler }: Args): Hono {
     );
     if (!repoCfg?.jira_tracker)
       return c.json({ error: "no jira_tracker config for this repo" }, 404);
+    if (repoCfg.hidden) return c.json({ status: "ignored", reason: "repo hidden" });
 
     const { jira_tracker } = repoCfg;
     if (jira_tracker.webhook_secret) {
@@ -344,6 +350,7 @@ export function webhooksRoute({ db, getConfig, scheduler }: Args): Hono {
     );
     if (!repoCfg?.todoist_tracker)
       return c.json({ error: "no todoist_tracker config for this repo" }, 404);
+    if (repoCfg.hidden) return c.json({ status: "ignored", reason: "repo hidden" });
 
     const { todoist_tracker } = repoCfg;
     if (todoist_tracker.webhook_secret) {

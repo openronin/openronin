@@ -197,7 +197,7 @@ export function startScheduler(
     const out: ReconcileResult[] = [];
     try {
       const config = getConfig();
-      const watched = config.repos.filter((r) => r.watched);
+      const watched = config.repos.filter((r) => r.watched && !r.hidden);
       for (const repo of watched) {
         try {
           const result = await reconcileRepo(db, repo, config.global.cadence);
@@ -239,7 +239,7 @@ export function startScheduler(
       return arr;
     }
     const config = getConfig();
-    const watched = config.repos.filter((r) => r.watched);
+    const watched = config.repos.filter((r) => r.watched && !r.hidden);
     if (watched.length === 0) return [];
 
     // Fire one drain per repo in parallel, guarded by per-repo busy flag.
@@ -309,7 +309,7 @@ export function startScheduler(
     // show up immediately and removed ones stop appearing.
     const config = getConfig();
     const wantedKeys = new Set<string>();
-    for (const repo of config.repos.filter((r) => r.watched)) {
+    for (const repo of config.repos.filter((r) => r.watched && !r.hidden)) {
       ensureWorker(repo);
       wantedKeys.add(repoKeyOf(repo));
     }

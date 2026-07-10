@@ -568,6 +568,20 @@ export class GithubVcsProvider implements VcsProvider {
     const { data } = await this.octokit.users.getAuthenticated();
     return data.login;
   }
+
+  async deleteWebhook(repo: VcsRepoRef, webhookId: number): Promise<void> {
+    try {
+      await this.octokit.repos.deleteWebhook({
+        owner: repo.owner,
+        repo: repo.name,
+        hook_id: webhookId,
+      });
+    } catch (error) {
+      // 404 = webhook already gone; treat as success.
+      if (isNotFound(error)) return;
+      throw error;
+    }
+  }
 }
 
 interface RawIssue {

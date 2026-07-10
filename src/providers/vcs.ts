@@ -67,4 +67,9 @@ export interface VcsProvider {
     prNumber: number,
     strategy: "merge" | "squash" | "rebase",
   ): Promise<{ merged: boolean; sha?: string; message?: string }>;
+  // Delete a repository webhook by numeric provider-side id. Used by the
+  // repo-purge admin action to clean up the webhook we registered when
+  // the repo was connected. Implementations must treat 404 as success
+  // (idempotency: someone may have deleted the hook out-of-band already).
+  deleteWebhook(repo: VcsRepoRef, webhookId: number): Promise<void>;
 }

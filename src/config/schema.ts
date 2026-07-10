@@ -126,6 +126,12 @@ export const RepoConfigSchema = z.object({
   owner: z.string().min(1),
   name: z.string().min(1),
   watched: z.boolean().default(true),
+  // Hidden repo: operator soft-untracked it via the admin UI. Stronger and
+  // stickier than `watched=false`: the repo is invisible in the main UI,
+  // ignored by scheduler/reconcile/webhooks/Director, and eligible for
+  // purge (permanent removal) from the settings page. Reversible by
+  // flipping this flag back to false in YAML.
+  hidden: z.boolean().default(false),
   lanes: z.array(RepoLaneSchema).default(["triage"]),
   cadence: CadenceSchema.optional(),
   protected_labels: z.array(z.string()).default([]),

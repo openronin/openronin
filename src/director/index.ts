@@ -60,6 +60,11 @@ function listDirectorEnabledRepos(db: Db, config: RuntimeConfig): RepoLookup[] {
   const idByKey = listRepoIdsByKey(db);
   const out: RepoLookup[] = [];
   for (const repo of config.repos) {
+    // Hidden repos are inert everywhere — including the Director. The
+    // main-service scheduler already skips them; mirror that here so a
+    // director sharing the same config doesn't propose work on a repo
+    // the operator soft-untracked.
+    if (repo.hidden) continue;
     const director = repo.director;
     if (!director || !director.enabled || director.mode === "disabled") continue;
     if (!director.charter) continue; // no charter → silently skip (safe default)

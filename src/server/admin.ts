@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import { basicAuth } from "hono/basic-auth";
 import { styleguideRoute } from "./styleguide.js";
 import { directorAdminRoute } from "./admin-director.js";
-import { existsSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import YAML from "yaml";
 import type { Db } from "../storage/db.js";
 import type { RuntimeConfig } from "../config/schema.js";
@@ -1006,6 +1006,14 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                   >
                     Connect webhook
                   </button>
+                  <button
+                    type="button"
+                    onclick="openUntrackModal(${r.id}, '${r.owner}/${r.name}')"
+                    class="ml-1 px-2 py-1 text-xs bg-amber-700 text-white rounded hover:bg-amber-800"
+                    title="Soft-untrack this repo: hide from the main UI and stop all interaction"
+                  >
+                    Untrack
+                  </button>
                 </td>
               </tr>
             `,
@@ -1064,10 +1072,123 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
           </tbody>
         </table>
       </section>
+
+      <p class="text-xs text-muted mt-4">
+        Soft-untracked repos are managed on
+        <a href="/admin/settings/hidden" class="text-brand hover:underline"
+          >Settings → Hidden repos</a
+        >.
+      </p>
+
+      <div
+        id="untrack-modal"
+        class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50"
+      >
+        <div class="bg-elevated rounded shadow-lg border w-full max-w-md p-4">
+          <h3 class="font-semibold text-lg mb-2">Untrack repo</h3>
+          <p class="text-sm text-secondary mb-2">
+            The repo will be hidden from the main UI and every subsystem (scheduler, webhooks,
+            Director) will stop interacting with it. History stays in the DB and the YAML file
+            remains on disk — this is reversible by flipping
+            <code>hidden: false</code> in the YAML. Permanent deletion is a separate step on
+            <a href="/admin/settings/hidden" class="text-brand hover:underline"
+              >Settings → Hidden repos</a
+            >.
+          </p>
+          <p class="text-sm mb-2">Type <code id="untrack-confirm-target"></code> to confirm.</p>
+          <form id="untrack-form" method="post">
+            <input
+              type="text"
+              name="confirm"
+              id="untrack-confirm-input"
+              class="w-full border rounded px-2 py-1.5 mb-3 font-mono text-sm"
+              autocomplete="off"
+              required
+            />
+            <div class="flex justify-end gap-2">
+              <button
+                type="button"
+                onclick="closeUntrackModal()"
+                class="px-3 py-1.5 text-sm bg-surface border rounded"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                id="untrack-submit"
+                class="px-3 py-1.5 text-sm bg-amber-700 text-white rounded disabled:opacity-50"
+                disabled
+              >
+                Untrack
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <script>
+        function openUntrackModal(id, slug) {
+          const modal = document.getElementById("untrack-modal");
+          const form = document.getElementById("untrack-form");
+          const input = document.getElementById("untrack-confirm-input");
+          const submit = document.getElementById("untrack-submit");
+          document.getElementById("untrack-confirm-target").textContent = slug;
+          form.action = "/admin/repos/" + id + "/hide";
+          input.value = "";
+          submit.disabled = true;
+          input.oninput = function () {
+            submit.disabled = input.value !== slug;
+          };
+          modal.classList.remove("hidden");
+          modal.classList.add("flex");
+          input.focus();
+        }
+        function closeUntrackModal() {
+          const modal = document.getElementById("untrack-modal");
+          modal.classList.add("hidden");
+          modal.classList.remove("flex");
+        }
+      </script>
     `;
     return c.html(
       page({ title: "Repos", section: "repos", body, isHtmx: isHtmx(c.req.raw.headers) }),
     );
+  });
+
+  // Soft-untrack (hide) a repo. Requires the operator to type the exact
+  // `owner/name` slug as a paste-protection guard. On success, writes
+  // `hidden: true` into the per-repo YAML and force-reloads config so the
+  // scheduler / webhooks / Director stop interacting with it before the
+  // response returns. Reversible by flipping the YAML flag back to false.
+  app.post("/repos/:id/hide", async (c) => {
+    const id = Number(c.req.param("id"));
+    const row = listRepos(db, { includeHidden: true }).find((r) => r.id === id);
+    if (!row) return c.html(flash("error", "Repo not found"), 404);
+    if (row.hidden === 1) return c.html(flash("error", "Repo is already hidden"), 400);
+    const form = await c.req.parseBody();
+    const expected = `${row.owner}/${row.name}`;
+    const confirm = String(form.confirm ?? "").trim();
+    if (confirm !== expected) {
+      return c.html(flash("error", `Confirmation did not match. Expected "${expected}".`), 400);
+    }
+    const cfg = getConfig().repos.find(
+      (r) => r.provider === row.provider && r.owner === row.owner && r.name === row.name,
+    );
+    if (!cfg) return c.html(flash("error", "Repo not in current config"), 400);
+    const yamlPath = resolve(
+      getConfig().dataDir,
+      "config",
+      "repos",
+      repoConfigFilename({
+        provider: row.provider as "github" | "gitlab" | "gitea",
+        owner: row.owner,
+        name: row.name,
+      }),
+    );
+    const nextCfg: RepoConfig = { ...cfg, hidden: true };
+    writeFileSync(yamlPath, YAML.stringify(nextCfg), { mode: 0o600 });
+    const fresh = reloadConfig(getConfig());
+    syncReposFromConfig(db, fresh.repos);
+    return c.redirect("/admin/repos");
   });
 
   app.post("/repos", async (c) => {
@@ -3742,12 +3863,28 @@ ${text}</textarea
     const config = getConfig();
     const path = resolve(config.dataDir, "config", "openronin.yaml");
     const text = existsSync(path) ? readFileSync(path, "utf8") : "";
+    const hiddenCount = listRepos(db, { hiddenOnly: true }).length;
     const body = html`
       <h1 class="text-2xl font-semibold mb-4">Settings</h1>
       <p class="text-xs text-muted mb-4">
         Global config at <code>${path}</code> — fs.watch reloads on save.
       </p>
       <div id="flash" class="mb-3"></div>
+      <section
+        class="bg-elevated rounded shadow-sm border p-4 mb-4 flex items-center justify-between"
+      >
+        <div>
+          <h2 class="font-medium">Hidden repos</h2>
+          <p class="text-xs text-muted">
+            Soft-untracked repos (inert but retained). Purge from here.
+          </p>
+        </div>
+        <a
+          href="/admin/settings/hidden"
+          class="px-3 py-1.5 text-sm bg-slate-800 text-white rounded hover:bg-slate-700"
+          >Manage (${hiddenCount})</a
+        >
+      </section>
       <form hx-post="/admin/settings" hx-target="#flash">
         <textarea
           name="yaml"
@@ -3765,6 +3902,274 @@ ${text}</textarea
     return c.html(
       page({ title: "Settings", section: "settings", body, isHtmx: isHtmx(c.req.raw.headers) }),
     );
+  });
+
+  // Hidden repos — list + purge. A hidden repo is inert everywhere; this
+  // is the only place it stays visible so the operator can either restore
+  // it (edit YAML `hidden: false`) or destroy it permanently.
+  app.get("/settings/hidden", (c) => {
+    const rows = listRepos(db, { hiddenOnly: true });
+    const hasPassword = Boolean(process.env.ADMIN_UI_PASSWORD);
+    const tallies: Record<number, { tasks: number; runs: number; prs: number }> = {};
+    for (const r of rows) {
+      const t = (
+        db.prepare(`SELECT COUNT(*) AS n FROM tasks WHERE repo_id = ?`).get(r.id) as { n: number }
+      ).n;
+      const ru = (
+        db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM runs ru JOIN tasks t ON t.id = ru.task_id WHERE t.repo_id = ?`,
+          )
+          .get(r.id) as { n: number }
+      ).n;
+      const pr = (
+        db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM pr_branches pb JOIN tasks t ON t.id = pb.task_id WHERE t.repo_id = ?`,
+          )
+          .get(r.id) as { n: number }
+      ).n;
+      tallies[r.id] = { tasks: t, runs: ru, prs: pr };
+    }
+    const list =
+      rows.length === 0
+        ? raw(
+            `<tr><td colspan=4 class='py-4 text-muted text-center text-sm'><em>no hidden repos</em></td></tr>`,
+          )
+        : rows.map((r) => {
+            const t = tallies[r.id]!;
+            return html`<tr class="border-t">
+              <td class="px-3 py-2 font-mono text-sm">${r.provider}:${r.owner}/${r.name}</td>
+              <td class="px-3 py-2 text-xs text-muted">
+                ${t.tasks} tasks · ${t.runs} runs · ${t.prs} PR branches
+              </td>
+              <td class="px-3 py-2 text-xs text-muted">${time(r.created_at)}</td>
+              <td class="px-3 py-2 text-right">
+                <button
+                  type="button"
+                  onclick="openPurgeModal(${r.id}, '${r.owner}/${r.name}')"
+                  class="px-2 py-1 text-xs bg-red-700 text-white rounded hover:bg-red-800 disabled:opacity-50"
+                  ${hasPassword ? raw("") : raw("disabled")}
+                  title="${hasPassword
+                    ? "Permanently delete this repo, its tasks, runs, PR branches, YAML, worktree and reports"
+                    : "Purge disabled: set ADMIN_UI_PASSWORD to enable"}"
+                >
+                  Purge
+                </button>
+              </td>
+            </tr>`;
+          });
+    const body = html`
+      <h1 class="text-2xl font-semibold mb-2">Hidden repos</h1>
+      <p class="text-sm text-muted mb-4">
+        These repos are hidden from the main UI and ignored by every subsystem. Purge is
+        <strong>irreversible</strong>: it removes the DB row (cascading to tasks, runs, PR branches,
+        deploys, webhook secrets and director tables), the per-repo YAML file, the working tree and
+        reports on disk, and attempts to delete the webhook on the VCS side. To restore a hidden
+        repo without deleting it, edit its YAML file and set <code>hidden: false</code>.
+      </p>
+      <div id="flash" class="mb-3"></div>
+      ${hasPassword
+        ? raw("")
+        : html`<div
+            class="mb-3 bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-yellow-900"
+          >
+            Purge is disabled because <code>ADMIN_UI_PASSWORD</code> is unset. Purge requires a real
+            admin password to confirm the operation.
+          </div>`}
+
+      <section class="bg-elevated rounded shadow-sm border">
+        <table class="w-full text-sm">
+          <thead class="bg-surface text-secondary text-left text-xs">
+            <tr>
+              <th class="px-3 py-2">Repo</th>
+              <th class="px-3 py-2">Tails</th>
+              <th class="px-3 py-2">Added</th>
+              <th class="px-3 py-2 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${list}
+          </tbody>
+        </table>
+      </section>
+
+      <div
+        id="purge-modal"
+        class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50"
+      >
+        <div class="bg-elevated rounded shadow-lg border w-full max-w-md p-4">
+          <h3 class="font-semibold text-lg mb-2 text-red-700">Permanently delete repo</h3>
+          <p class="text-sm text-secondary mb-2">
+            About to purge <code id="purge-slug"></code>. This deletes every row related to this
+            repo (tasks, runs, PR branches, deploys, webhook secrets, director state), the per-repo
+            YAML config, the working tree and reports on disk, and attempts to remove the webhook on
+            the VCS side. This cannot be undone.
+          </p>
+          <p class="text-sm mb-2">Re-authenticate with the admin credentials to proceed.</p>
+          <form id="purge-form" method="post">
+            <label class="block text-xs text-secondary mb-1">Admin user</label>
+            <input
+              type="text"
+              name="admin_user"
+              class="w-full border rounded px-2 py-1.5 mb-2 text-sm"
+              autocomplete="off"
+              required
+            />
+            <label class="block text-xs text-secondary mb-1">Admin password</label>
+            <input
+              type="password"
+              name="admin_password"
+              class="w-full border rounded px-2 py-1.5 mb-3 text-sm"
+              autocomplete="new-password"
+              required
+            />
+            <div class="flex justify-end gap-2">
+              <button
+                type="button"
+                onclick="closePurgeModal()"
+                class="px-3 py-1.5 text-sm bg-surface border rounded"
+              >
+                Cancel
+              </button>
+              <button type="submit" class="px-3 py-1.5 text-sm bg-red-700 text-white rounded">
+                Purge permanently
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <script>
+        function openPurgeModal(id, slug) {
+          const modal = document.getElementById("purge-modal");
+          const form = document.getElementById("purge-form");
+          form.action = "/admin/settings/hidden/" + id + "/purge";
+          document.getElementById("purge-slug").textContent = slug;
+          form.reset();
+          modal.classList.remove("hidden");
+          modal.classList.add("flex");
+        }
+        function closePurgeModal() {
+          const modal = document.getElementById("purge-modal");
+          modal.classList.add("hidden");
+          modal.classList.remove("flex");
+        }
+      </script>
+    `;
+    return c.html(
+      page({
+        title: "Hidden repos",
+        section: "settings",
+        body,
+        isHtmx: isHtmx(c.req.raw.headers),
+      }),
+    );
+  });
+
+  // Permanently delete a hidden repo. Requires the admin Basic-auth
+  // credentials to be re-typed (posted with the form). Order is deliberate:
+  // 1. Verify creds — reject bad without side effects.
+  // 2. Snapshot the log-file paths — the DELETE below cascades them away.
+  // 3. Attempt GitHub webhook removal (best-effort).
+  // 4. Cascade-delete the DB row.
+  // 5. Delete the YAML config file so the next fs.watch tick doesn't
+  //    re-materialise the repo.
+  // 6. Remove per-repo working tree, reports and JSONL log files on disk.
+  app.post("/settings/hidden/:id/purge", async (c) => {
+    const id = Number(c.req.param("id"));
+    const row = listRepos(db, { hiddenOnly: true }).find((r) => r.id === id);
+    if (!row) return c.html(flash("error", "Hidden repo not found"), 404);
+    const form = await c.req.parseBody();
+    const adminUser = String(form.admin_user ?? "");
+    const adminPassword = String(form.admin_password ?? "");
+    const check = verifyAdminCredentials(adminUser, adminPassword);
+    if (check !== "ok") {
+      return c.html(flash("error", `Purge refused: ${check}`), check === "no-password" ? 400 : 401);
+    }
+
+    const config = getConfig();
+    const providerId = row.provider;
+
+    const logPaths = (
+      db
+        .prepare(
+          `SELECT ru.log_path AS lp, ru.prompt_log_path AS pp
+             FROM runs ru JOIN tasks t ON t.id = ru.task_id
+            WHERE t.repo_id = ?`,
+        )
+        .all(row.id) as Array<{ lp: string | null; pp: string | null }>
+    )
+      .flatMap((r) => [r.lp, r.pp])
+      .filter((p): p is string => typeof p === "string" && p.length > 0);
+
+    const secret = db
+      .prepare("SELECT webhook_id FROM webhook_secrets WHERE repo_id = ?")
+      .get(row.id) as { webhook_id: string | null } | undefined;
+    if (secret?.webhook_id && providerId === "github" && process.env.GITHUB_TOKEN) {
+      const webhookIdNum = Number(secret.webhook_id);
+      if (Number.isFinite(webhookIdNum)) {
+        try {
+          const provider = new GithubVcsProvider();
+          await provider.deleteWebhook({ owner: row.owner, name: row.name }, webhookIdNum);
+        } catch (err) {
+          console.warn(
+            `[admin] purge: webhook delete failed for ${row.owner}/${row.name}:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
+    }
+
+    db.prepare("DELETE FROM repos WHERE id = ?").run(row.id);
+
+    const yamlPath = resolve(
+      config.dataDir,
+      "config",
+      "repos",
+      repoConfigFilename({
+        provider: row.provider as "github" | "gitlab" | "gitea",
+        owner: row.owner,
+        name: row.name,
+      }),
+    );
+    if (existsSync(yamlPath)) {
+      try {
+        unlinkSync(yamlPath);
+      } catch (err) {
+        console.warn(`[admin] purge: unlink ${yamlPath} failed:`, err);
+      }
+    }
+    const fresh = reloadConfig(config);
+    syncReposFromConfig(db, fresh.repos);
+
+    const providerOwner = `${row.provider}__${row.owner}`;
+    const workDir = resolve(config.dataDir, "work", providerOwner, row.name);
+    if (existsSync(workDir)) {
+      try {
+        rmSync(workDir, { recursive: true, force: true });
+      } catch (err) {
+        console.warn(`[admin] purge: rm work dir ${workDir} failed:`, err);
+      }
+    }
+    const reportsDir = resolve(config.dataDir, "reports", row.provider, row.owner, row.name);
+    if (existsSync(reportsDir)) {
+      try {
+        rmSync(reportsDir, { recursive: true, force: true });
+      } catch (err) {
+        console.warn(`[admin] purge: rm reports dir ${reportsDir} failed:`, err);
+      }
+    }
+    for (const p of logPaths) {
+      if (!existsSync(p)) continue;
+      try {
+        rmSync(p, { force: true });
+      } catch (err) {
+        console.warn(`[admin] purge: rm log ${p} failed:`, err);
+      }
+    }
+
+    console.log(`[admin] purge: repo ${row.provider}:${row.owner}/${row.name} deleted`);
+    return c.redirect("/admin/settings/hidden");
   });
 
   app.post("/settings", async (c) => {
@@ -4205,6 +4610,32 @@ function statCard(label: string, value: number, color = "slate", href?: string):
 function flash(kind: "ok" | "error", message: string): string {
   const cls = kind === "ok" ? "badge-success" : "badge-danger";
   return html`<div class="border rounded px-3 py-2 text-sm ${cls}">${message}</div>`.toString();
+}
+
+// Re-verify the admin Basic-auth credentials for an irreversible action
+// (e.g. repo purge). Uses timingSafeEqual so a wrong password can't be
+// probed by response time. Returns "ok" or a short reason string.
+export function verifyAdminCredentials(
+  user: string,
+  password: string,
+): "ok" | "no-password" | "wrong-credentials" {
+  const expectedPassword = process.env.ADMIN_UI_PASSWORD;
+  if (!expectedPassword) return "no-password";
+  const expectedUser = process.env.OPENRONIN_ADMIN_USER ?? "admin";
+  const userBuf = Buffer.from(user);
+  const expectedUserBuf = Buffer.from(expectedUser);
+  const pwBuf = Buffer.from(password);
+  const expectedPwBuf = Buffer.from(expectedPassword);
+  // Length mismatch would throw in timingSafeEqual; short-circuit but
+  // still run one dummy compare so timing stays roughly flat.
+  const lenMismatch =
+    userBuf.length !== expectedUserBuf.length || pwBuf.length !== expectedPwBuf.length;
+  const dummy = Buffer.alloc(1);
+  timingSafeEqual(dummy, dummy);
+  if (lenMismatch) return "wrong-credentials";
+  const userOk = timingSafeEqual(userBuf, expectedUserBuf);
+  const pwOk = timingSafeEqual(pwBuf, expectedPwBuf);
+  return userOk && pwOk ? "ok" : "wrong-credentials";
 }
 
 // Annotated deploy config examples — surfaced via 'Show config example'

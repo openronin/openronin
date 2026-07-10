@@ -567,6 +567,16 @@ export class GitlabVcsProvider implements VcsProvider {
     const user = await this.get<{ username: string }>("/user");
     return user.username;
   }
+
+  async deleteWebhook(repo: VcsRepoRef, webhookId: number): Promise<void> {
+    const pid = this.projectId(repo);
+    try {
+      await this.apiFetch(`/projects/${pid}/hooks/${webhookId}`, { method: "DELETE" });
+    } catch (e) {
+      if (isNotFound(e)) return;
+      throw e;
+    }
+  }
 }
 
 // ---- mapping helpers ----
