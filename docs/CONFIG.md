@@ -187,6 +187,14 @@ deploy:
 language_for_communication: English
 language_for_commits: English
 language_for_code_identifiers: English
+
+# Commit trailers appended to every commit the bot authors in this repo.
+# Applied deterministically via a prepare-commit-msg hook installed into the
+# working tree (not by asking the LLM), so they land on every commit — even
+# `--no-verify` — and are de-duplicated. Each entry is a full trailer line.
+# Empty (default) installs no hook and changes nothing.
+commit_trailers:
+  - "Co-authored-by: Jane Maintainer <jane@example.com>"
 ```
 
 ---

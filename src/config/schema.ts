@@ -225,6 +225,13 @@ export const RepoConfigSchema = z.object({
   language_for_communication: z.string().default("English"),
   language_for_commits: z.string().default("English"),
   language_for_code_identifiers: z.string().default("English"),
+  // Commit trailers appended to every commit the bot authors in this repo,
+  // deterministically via a prepare-commit-msg hook (not the LLM prompt).
+  // Each entry is a full trailer line, e.g.
+  //   "Co-authored-by: Jane Doe <jane@example.com>"
+  // Useful for crediting the human operator as co-author, or DCO Signed-off-by.
+  // Empty (default) disables the hook — behaviour is unchanged.
+  commit_trailers: z.array(z.string()).default([]),
   // Acknowledgment behaviour
   in_progress_label: z.string().default("openronin:in-progress"),
   // Status labels the bot manages on issues / PRs.

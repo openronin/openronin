@@ -107,7 +107,7 @@ export async function attemptRebaseResolve(
     if (!workdirReady || !existsSync(workdir)) {
       // Fresh clone of the PR branch.
       await clone({ url: authedUrl, workdir, branch, depth: 100 });
-      await setBotIdentity(workdir);
+      await setBotIdentity(workdir, repo.commit_trailers);
     } else if (rebaseInProgress(workdir)) {
       // Defensive: a previous run aborted mid-rebase and didn't clean up.
       // Get back to a sane state before we start fresh.

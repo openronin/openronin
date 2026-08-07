@@ -131,7 +131,7 @@ export async function runPatch(input: PatchInput): Promise<PatchResult> {
   try {
     // 1. Clone fresh into worktree (token in URL so private repos work)
     await clone({ url: authedUrl, workdir, branch: repo.patch_default_base, depth: 50 });
-    await setBotIdentity(workdir);
+    await setBotIdentity(workdir, repo.commit_trailers);
     const baseSha = await getCurrentSha(workdir);
 
     // 2. New branch

@@ -179,7 +179,7 @@ export async function runPrDialog(input: PrDialogInput): Promise<PrDialogResult>
 
     // 2. Clone the PR branch into a fresh worktree.
     await clone({ url: authedUrl, workdir, branch, depth: 50 });
-    await setBotIdentity(workdir);
+    await setBotIdentity(workdir, repo.commit_trailers);
     const baseSha = await getCurrentSha(workdir);
 
     // 3. Render dialog prompt.

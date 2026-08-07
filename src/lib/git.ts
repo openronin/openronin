@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 export interface GitRunResult {
@@ -101,9 +101,62 @@ export function getBotIdentity(): { name: string; email: string } {
   };
 }
 
-export async function setBotIdentity(workdir: string): Promise<void> {
+export async function setBotIdentity(
+  workdir: string,
+  commitTrailers: string[] = [],
+): Promise<void> {
   const id = getBotIdentity();
   await setIdentity(workdir, id.name, id.email);
+  const trailers = commitTrailers.map((t) => t.trim()).filter((t) => t.length > 0);
+  if (trailers.length > 0) {
+    // Pin the hooks dir to this clone so an inherited global `core.hooksPath`
+    // (e.g. Husky / corporate templates) can't silently disable our hook.
+    await runGitChecked(workdir, [
+      "config",
+      "--local",
+      "core.hooksPath",
+      resolve(workdir, ".git", "hooks"),
+    ]);
+    installCommitTrailersHook(workdir, trailers);
+  }
+}
+
+/**
+ * Write a `prepare-commit-msg` hook into an already-cloned worktree that
+ * appends the given commit trailers (e.g. `Co-authored-by: A B <a@b>`) to
+ * every commit made in it. Deterministic: unlike instructing the LLM agent,
+ * this fires on every `git commit` — including `--no-verify`, which does not
+ * disable prepare-commit-msg — and de-duplicates via `addIfDifferent`.
+ *
+ * Trailer values are written to a data file and read by a *static* hook script
+ * (`while read`), so they are never interpolated into shell — no quoting /
+ * injection hazard even if a value contains quotes, `$` or backticks.
+ *
+ * No-op when `trailers` is empty. Exported for testing.
+ */
+export function installCommitTrailersHook(workdir: string, trailers: string[]): void {
+  const clean = trailers.map((t) => t.trim()).filter((t) => t.length > 0);
+  if (clean.length === 0) return;
+  const gitDir = resolve(workdir, ".git");
+  const hooksDir = resolve(gitDir, "hooks");
+  mkdirSync(hooksDir, { recursive: true });
+  // One trailer per line; consumed as data by the hook, never eval'd.
+  writeFileSync(resolve(gitDir, "openronin-trailers"), clean.join("\n") + "\n");
+  const hook = [
+    "#!/bin/sh",
+    "# Installed by openronin — append configured commit trailers deterministically.",
+    "# $1 = path to the commit message file being prepared.",
+    'trailers_file="$(git rev-parse --git-dir)/openronin-trailers"',
+    '[ -f "$trailers_file" ] || exit 0',
+    "while IFS= read -r trailer; do",
+    '  [ -n "$trailer" ] || continue',
+    '  git interpret-trailers --in-place --if-exists addIfDifferent --if-missing add --trailer "$trailer" "$1"',
+    'done < "$trailers_file"',
+    "",
+  ].join("\n");
+  const hookPath = resolve(hooksDir, "prepare-commit-msg");
+  writeFileSync(hookPath, hook, { mode: 0o755 });
+  chmodSync(hookPath, 0o755);
 }
 
 export async function getCurrentSha(workdir: string): Promise<string> {

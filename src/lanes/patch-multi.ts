@@ -117,7 +117,7 @@ export async function runPatchMulti(input: PatchMultiInput): Promise<PatchMultiR
 
   try {
     await clone({ url: authedUrl, workdir, branch: repo.patch_default_base, depth: 50 });
-    await setBotIdentity(workdir);
+    await setBotIdentity(workdir, repo.commit_trailers);
     const baseSha = await getCurrentSha(workdir);
 
     await checkoutNewBranch(workdir, branch);

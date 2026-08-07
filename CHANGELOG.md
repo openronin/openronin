@@ -4,6 +4,12 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Added — deterministic per-repo commit trailers (issue #108)
+
+- **`RepoConfigSchema.commit_trailers`** (defaults to `[]`) lists commit trailers appended to every commit the bot authors in a repo — e.g. `Co-authored-by: …` to credit the human operator, or a DCO `Signed-off-by: …`.
+- **Applied via a `prepare-commit-msg` hook**, not the LLM prompt. `setBotIdentity()` (the single chokepoint all code-mutating lanes already call) installs the hook into the fresh clone. It fires on every `git commit` — including `--no-verify`, which does not disable `prepare-commit-msg` — and de-duplicates via `git interpret-trailers --if-exists addIfDifferent`.
+- **Injection-safe:** trailer values are written to a data file and read by a static hook script (`while read`), never interpolated into shell. The installer pins `core.hooksPath` to the clone's own hooks dir (so an inherited global hooksPath can't silently disable it) and sets the executable bit. Empty (default) installs no hook — behaviour unchanged.
+
 ### Added — soft-untrack + purge repo lifecycle (issue #104)
 
 - **Two-stage repo removal from the admin UI.** *Untrack* (soft-hide) on `/admin/repos` flips `hidden: true` in the per-repo YAML after the operator types the exact `owner/name` slug; the repo disappears from the main UI and every subsystem stops touching it (scheduler / reconcile / worker / webhooks / Director all skip hidden repos). *Purge* on `/admin/settings/hidden` is irreversible: it requires re-typing the admin Basic-auth credentials (constant-time compared), then deletes the DB row (cascading via FK to tasks / runs / pr_branches / deploys / webhook_secrets / director_*), the per-repo YAML config, the working tree under `work/`, reports, and JSONL run logs, and best-effort removes the webhook on the VCS side.
