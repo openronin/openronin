@@ -489,8 +489,15 @@ export class GithubVcsProvider implements VcsProvider {
       });
     }
 
-    // PR-only endpoints: 404 if `prNumber` is actually an issue. The method is reused by the
-    // analyze lane on issues, so swallow 404s and return whatever issue-level comments we got.
+    // PR-only endpoints: GitHub rejects them when `prNumber` is actually an issue, but not with a
+    // single status — `/pulls/{n}/reviews` answers 404 while `/pulls/{n}/comments` answers 403
+    // ("Resource not accessible by personal access token"), with the same token that reads both
+    // fine on a real pull request. The method is reused by the analyze lane on issues, so both
+    // statuses must be treated as "this number is not a pull request" (see isNotAPullRequest).
+    //
+    // Either way these two calls are optional enrichment: a failure here must never discard the
+    // issue-level comments already collected above, which is what made an issue thread arrive at
+    // the analyze lane as an empty list.
     try {
       const reviews = await this.octokit.paginate(this.octokit.pulls.listReviews, {
         owner: repo.owner,
@@ -510,7 +517,7 @@ export class GithubVcsProvider implements VcsProvider {
         });
       }
     } catch (error) {
-      if (!isNotFound(error)) throw error;
+      if (!isNotAPullRequest(error)) throw error;
     }
 
     try {
@@ -532,7 +539,7 @@ export class GithubVcsProvider implements VcsProvider {
         });
       }
     } catch (error) {
-      if (!isNotFound(error)) throw error;
+      if (!isNotAPullRequest(error)) throw error;
     }
 
     out.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
@@ -599,9 +606,26 @@ interface RawIssue {
 }
 
 function isNotFound(error: unknown): boolean {
-  return (
-    typeof error === "object" && error !== null && (error as { status?: number }).status === 404
-  );
+  return errorStatus(error) === 404;
+}
+
+/**
+ * True when a PR-only endpoint was called with a number that is not a pull request.
+ *
+ * GitHub is not consistent about which status it uses for that: `/pulls/{n}/reviews` answers 404,
+ * while `/pulls/{n}/comments` answers 403 "Resource not accessible by personal access token" — the
+ * same token reads both endpoints fine on a real pull request, so the 403 is not a scope problem.
+ */
+function isNotAPullRequest(error: unknown): boolean {
+  const status = errorStatus(error);
+
+  return status === 404 || status === 403;
+}
+
+function errorStatus(error: unknown): number | undefined {
+  return typeof error === "object" && error !== null
+    ? (error as { status?: number }).status
+    : undefined;
 }
 
 function mapReviewState(state: string | null | undefined): ReviewComment["reviewState"] {
