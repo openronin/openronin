@@ -5,7 +5,7 @@ import { loadTemplate, renderTemplate } from "../prompts/registry.js";
 import { runJob, type SupervisorContext } from "../supervisor/index.js";
 import { ensureRepo, recordTaskDecision, upsertTask } from "../storage/tasks.js";
 import { bumpIteration, getPrBranchByPrNumber, recordPrBranch } from "../storage/pr-branches.js";
-import { isBotMessage, pick, BOT_PREFIX } from "./messages.js";
+import { isBotMessage, isTrustedCommentAuthor, pick, BOT_PREFIX } from "./messages.js";
 import { parseSqliteUtc } from "../lib/time.js";
 import { extractDeniedBashCommands } from "../engines/claude-code.js";
 import { attemptRebaseResolve } from "./conflict-resolve.js";
@@ -131,6 +131,7 @@ export async function runPrDialog(input: PrDialogInput): Promise<PrDialogResult>
       (c) =>
         new Date(c.createdAt).getTime() > parseSqliteUtc(since).getTime() &&
         !repo.pr_dialog_skip_authors.includes(c.author) &&
+        isTrustedCommentAuthor(c, repo) &&
         !isBotMessage(c.body),
     );
     if (newFeedback.length === 0) {

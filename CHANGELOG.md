@@ -4,6 +4,13 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Security — only trusted authors can steer the agent through comments (issue #117)
+
+- **New per-repo config `trusted_comment_associations`** (default `[OWNER, MEMBER, COLLABORATOR]`). On GitHub, comments whose `author_association` is outside this list are ignored by `pr_dialog`, the reconcile PR poll, `analyze`, and the webhook (which no longer enqueues work for them). Before, anyone able to comment on the bot's PR in a public repo could feed instructions into a `bypassPermissions` agent. `null` restores the old accept-everyone behaviour.
+- **`trusted_comment_authors`** (default `[]`) lists logins trusted regardless of association — needed for review bots such as `claude[bot]`, which comment with association `NONE`. **If you rely on an automated reviewer's comments being acted on, add its login here when upgrading.**
+- **`ReviewComment.authorAssociation`** is filled by `GithubVcsProvider.listAllPrFeedback()` for issue comments, reviews and review comments. Providers that don't expose it (GitLab, trackers) are not filtered.
+- In `analyze` the filter runs before the bot/human split, so an outsider's comment carrying a spoofed bot marker no longer reaches the prompt as a "previous bot reply".
+
 ### Added — soft-untrack + purge repo lifecycle (issue #104)
 
 - **Two-stage repo removal from the admin UI.** *Untrack* (soft-hide) on `/admin/repos` flips `hidden: true` in the per-repo YAML after the operator types the exact `owner/name` slug; the repo disappears from the main UI and every subsystem stops touching it (scheduler / reconcile / worker / webhooks / Director all skip hidden repos). *Purge* on `/admin/settings/hidden` is irreversible: it requires re-typing the admin Basic-auth credentials (constant-time compared), then deletes the DB row (cascading via FK to tasks / runs / pr_branches / deploys / webhook_secrets / director_*), the per-repo YAML config, the working tree under `work/`, reports, and JSONL run logs, and best-effort removes the webhook on the VCS side.

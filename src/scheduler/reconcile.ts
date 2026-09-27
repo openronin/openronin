@@ -7,7 +7,7 @@ import { ensureRepo, upsertTask, upsertJiraTask } from "../storage/tasks.js";
 import { enqueue } from "./queue.js";
 import { computeNextDueAt } from "./cadence.js";
 import { listPrBranches } from "../storage/pr-branches.js";
-import { isBotMessage } from "../lanes/messages.js";
+import { isBotMessage, isTrustedCommentAuthor } from "../lanes/messages.js";
 import { parseSqliteUtc } from "../lib/time.js";
 import { computeItemSnapshot } from "../lib/snapshot.js";
 
@@ -93,6 +93,7 @@ async function pollOurPrs(
         (c) =>
           new Date(c.createdAt).getTime() > parseSqliteUtc(since).getTime() &&
           !repo.pr_dialog_skip_authors.includes(c.author) &&
+          isTrustedCommentAuthor(c, repo) &&
           !isBotMessage(c.body),
       ).length;
 

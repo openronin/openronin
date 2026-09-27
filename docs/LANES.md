@@ -141,10 +141,14 @@ These are **terminal** — the lane router won't pick them up again until the ro
 
 **Skip authors:** comments from authors in `pr_dialog_skip_authors` (e.g. CI bots, dependabot) are ignored.
 
+**Trusted authors:** on GitHub only comments whose `author_association` is in `trusted_comment_associations` (default `OWNER`, `MEMBER`, `COLLABORATOR`) are acted on — by `pr_dialog`, by the reconcile PR poll, by `analyze` and by the webhook. Logins in `trusted_comment_authors` pass regardless of association — list review bots here (e.g. `claude[bot]`, association `NONE`). Outside comments on the bot's PRs are ignored; `null` restores the old accept-everyone behaviour.
+
 **Config knobs:**
 - `lanes` includes `pr_dialog`
 - `pr_dialog_max_iterations`
 - `pr_dialog_skip_authors`
+- `trusted_comment_associations`
+- `trusted_comment_authors`
 - `engine_overrides.pr_dialog`
 - `prompt_overrides.pr_dialog`
 

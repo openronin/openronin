@@ -29,6 +29,9 @@ export interface CommentRef {
 export interface ReviewComment {
   id: string;
   author: string;
+  // GitHub `author_association` (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE, ...).
+  // Undefined when the provider does not expose it — see isTrustedCommentAuthor().
+  authorAssociation?: string;
   body: string;
   createdAt: string;
   path?: string;

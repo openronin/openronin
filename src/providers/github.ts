@@ -483,6 +483,7 @@ export class GithubVcsProvider implements VcsProvider {
       out.push({
         id: String(c.id),
         author: c.user?.login ?? "unknown",
+        authorAssociation: c.author_association,
         body: c.body ?? "",
         createdAt: c.created_at,
         source: "issue_comment",
@@ -503,6 +504,7 @@ export class GithubVcsProvider implements VcsProvider {
         out.push({
           id: String(r.id),
           author: r.user?.login ?? "unknown",
+          authorAssociation: r.author_association,
           body: r.body ?? "",
           createdAt: r.submitted_at ?? new Date().toISOString(),
           source: "review",
@@ -524,6 +526,7 @@ export class GithubVcsProvider implements VcsProvider {
         out.push({
           id: String(c.id),
           author: c.user?.login ?? "unknown",
+          authorAssociation: c.author_association,
           body: c.body,
           createdAt: c.created_at,
           path: c.path,

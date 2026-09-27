@@ -4,7 +4,7 @@ import { GithubVcsProvider } from "../providers/github.js";
 import { loadTemplate, renderTemplate } from "../prompts/registry.js";
 import { runJob, type SupervisorContext } from "../supervisor/index.js";
 import { ensureRepo, recordTaskDecision, upsertTask } from "../storage/tasks.js";
-import { isBotMessage, pick, BOT_PREFIX } from "./messages.js";
+import { isBotMessage, isTrustedCommentAuthor, pick, BOT_PREFIX } from "./messages.js";
 
 export const AnalyzeSchema = z.object({
   state: z.enum(["ready", "needs_clarification"]),
@@ -72,7 +72,11 @@ export async function runAnalyze(input: AnalyzeInput): Promise<AnalyzeResult> {
   // gate (so the bot doesn't re-process its own comments as "new replies").
   let humanComments: ReviewComment[] = [];
   try {
-    allComments = await provider.listAllPrFeedback(ackRef, item.number);
+    // Untrusted authors are dropped before anything else: their text must not
+    // reach the prompt, not even as a spoofed "previous bot reply".
+    allComments = (await provider.listAllPrFeedback(ackRef, item.number)).filter((c) =>
+      isTrustedCommentAuthor(c, repo),
+    );
     humanComments = allComments.filter((c) => !isBotMessage(c.body));
   } catch {
     // best-effort

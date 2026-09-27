@@ -146,6 +146,14 @@ patch_multi_max_critique_iterations: 2
 pr_dialog_max_iterations: 10
 pr_dialog_skip_authors: [openronin[bot], dependabot[bot]]
 
+# Only comments from these GitHub author_association values reach pr_dialog / analyze
+# (and wake the bot via webhook). Anyone can comment on a PR in a public repo, and the
+# comment text goes into a git-write agent prompt. `null` disables the filter.
+# Providers without author_association (GitLab, trackers) are not filtered.
+trusted_comment_associations: [OWNER, MEMBER, COLLABORATOR]
+# Logins trusted regardless of association, e.g. a review bot whose association is NONE.
+trusted_comment_authors: [claude[bot]]
+
 # Auto-merge (L4.5, opt-in)
 auto_merge:
   enabled: false

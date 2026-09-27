@@ -165,6 +165,16 @@ export const RepoConfigSchema = z.object({
   // PR-dialog (L4)
   pr_dialog_max_iterations: z.number().int().positive().default(10),
   pr_dialog_skip_authors: z.array(z.string()).default(["openronin[bot]"]),
+  // GitHub author_association values whose comments reach pr_dialog / analyze.
+  // Comments from anyone else are ignored. `null` disables the filter.
+  trusted_comment_associations: z
+    .array(z.string().transform((s) => s.toUpperCase()))
+    .nullable()
+    .default(["OWNER", "MEMBER", "COLLABORATOR"]),
+  // Logins trusted regardless of association — e.g. a review bot (`claude[bot]`)
+  // whose comments pr_dialog is expected to act on. `[bot]` logins belong to
+  // GitHub Apps and cannot be registered by ordinary users.
+  trusted_comment_authors: z.array(z.string()).default([]),
   // Auto-merge (L4.5) — opt-in. When enabled, after a successful pushed
   // iteration with no open agent questions, the system checks PR state
   // (mergeable, no unresolved threads, CI green) and merges + closes.
