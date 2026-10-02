@@ -49,6 +49,14 @@ export const SchedulerConfigSchema = z
     reconcile_interval: DurationStr.default("15m"),
     drain_interval: DurationStr.default("30s"),
     drain_batch_size: z.number().int().positive().default(5),
+    // How many tasks of the SAME repo may run concurrently. Each slot is an
+    // independent drain loop; tasks are claimed atomically by dequeue() and
+    // every patch/pr_dialog run gets its own per-task clone, so slots never
+    // share a worktree. Default 1 keeps the historical "one worker per repo"
+    // behaviour. Per-repo `max_workers` overrides this. Size it to the host:
+    // each slot is a full Claude Code session plus whatever the agent runs
+    // (test suites, static analysis, builds) — see `runs:mem`.
+    max_workers_per_repo: z.number().int().min(1).max(16).default(1),
   })
   .default({});
 
@@ -134,6 +142,9 @@ export const RepoConfigSchema = z.object({
   hidden: z.boolean().default(false),
   lanes: z.array(RepoLaneSchema).default(["triage"]),
   cadence: CadenceSchema.optional(),
+  // Concurrent drain slots for this repo; falls back to the global
+  // scheduler.max_workers_per_repo when absent.
+  max_workers: z.number().int().min(1).max(16).optional(),
   protected_labels: z.array(z.string()).default([]),
   skip_authors: z.array(z.string()).default([]),
   allowed_close_reasons: z.array(z.string()).default([]),
@@ -274,6 +285,15 @@ export const RuntimeConfigSchema = z.object({
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
 
 // Helpers
+
+// Effective number of concurrent drain slots for a repo.
+export function maxWorkersFor(
+  repo: Pick<RepoConfig, "max_workers">,
+  global: Pick<GlobalConfig, "scheduler">,
+): number {
+  return repo.max_workers ?? global.scheduler.max_workers_per_repo;
+}
+
 export function repoKey(repo: Pick<RepoConfig, "provider" | "owner" | "name">): string {
   return `${repo.provider}--${repo.owner}--${repo.name}`;
 }

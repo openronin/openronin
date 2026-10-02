@@ -32,7 +32,7 @@ The agent eats its own dog food — most lanes after the bootstrap landed via th
 - **State outside the code tree.** SQLite, work-trees, reports, secrets, ssh keys live under `$OPENRONIN_DATA_DIR`. The repo itself is byte-for-byte clean of state.
 - **Engine boundary.** Code mutations only via the Claude Code worker. MIMO never edits files. Don't blur this line.
 - **No vendor lock-in.** All VCS via `VcsProvider`, all task sources via `TrackerProvider`. Don't import `@octokit/*` outside `src/providers/github*.ts`.
-- **Per-repo workers.** `scheduler.tickDrain` fans out parallel drains, one per watched repo. A long task in repo A doesn't block repo B.
+- **Per-repo workers.** `scheduler.tickDrain` fans out parallel drains per watched repo. A long task in repo A doesn't block repo B. Within a repo up to `max_workers` (default 1, global `scheduler.max_workers_per_repo`) slots run concurrently — safe only because `dequeue()` claims atomically and every run has its own per-task clone; don't introduce shared per-repo mutable state (a shared worktree, a per-repo temp dir) without a lock, and never flip a `running` task's status from outside its own slot — use `enqueue()`, which defers via `rerun_requested`.
 - **Graceful shutdown.** `scheduler.stop(timeoutMs)` waits for workers + tracked side-activities (deploys). The SIGTERM handler in `src/index.ts` awaits up to 90s.
 - **Bot self-events.** Every bot post starts with `BOT_PREFIX` (env-overridable, default `🥷 openronin:`). Filter via `isBotMessage()` everywhere a comment list is processed.
 - **Bot git identity** comes from `getBotIdentity()` / `setBotIdentity(workdir)` in `src/lib/git.ts` — env-overridable. Don't hardcode `openronin[bot]` in lanes; call the helper.

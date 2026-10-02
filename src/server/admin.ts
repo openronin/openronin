@@ -190,7 +190,8 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                 priority = 'high',
                 next_due_at = NULL,
                 last_error = NULL
-          WHERE last_error LIKE '%rate limit%' OR last_error LIKE '%RateLimited%'`,
+          WHERE (last_error LIKE '%rate limit%' OR last_error LIKE '%RateLimited%')
+            AND status != 'running'`,
       )
       .run();
     return c.html(
@@ -241,10 +242,15 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
                 );
               })()
             : "";
+        // Slot occupancy only matters when the repo allows parallel slots.
+        const slots =
+          w.maxWorkers > 1
+            ? `<span class="text-xs text-muted" title="drain slots in flight / max_workers">${w.running}/${w.maxWorkers}</span>`
+            : "";
         return (
           `<li class="flex items-center gap-2 py-1.5 border-b border-subtle last:border-0">` +
           `${dot}<code class="text-xs flex-1 min-w-0 truncate">${escapeHtml(w.repoKey)}</code>` +
-          `${busyAge}${lastTs}${kickBtn}</li>`
+          `${slots}${busyAge}${lastTs}${kickBtn}</li>`
         );
       })
       .join("");
@@ -344,7 +350,11 @@ export function adminRoute({ db, getConfig, scheduler, startedAt }: Args): Hono 
               push(
                 controller,
                 "workers",
-                scheduler.workerStatuses().map((w) => ({ repo: w.repoKey, busy: w.busy })),
+                scheduler.workerStatuses().map((w) => ({
+                  repo: w.repoKey,
+                  busy: w.busy,
+                  running: w.running,
+                })),
               );
             }
           } catch {

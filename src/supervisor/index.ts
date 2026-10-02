@@ -113,10 +113,17 @@ export async function runJob(ctx: SupervisorContext, args: RunJobArgs): Promise<
   const timestamp = new Date().toISOString();
   const repo = `${ctx.repo.owner}/${ctx.repo.name}`;
 
+  let peakMemBytes: number | undefined;
+  const onPeakMemory = (bytes: number) => {
+    peakMemBytes = Math.max(peakMemBytes ?? 0, bytes);
+    args.engineOpts.onPeakMemory?.(bytes);
+  };
+
   try {
     const result = await choice.engine.run({
       ...args.engineOpts,
       model: choice.model,
+      onPeakMemory,
     });
     const logPath = writeRunLog(ctx.config.dataDir, runId, {
       lane: args.lane,
@@ -134,11 +141,18 @@ export async function runJob(ctx: SupervisorContext, args: RunJobArgs): Promise<
       error_message: undefined,
       duration_ms: result.durationMs,
     });
-    finishRun(ctx.db, runId, { status: "ok", usage: result.usage, logPath });
+    finishRun(ctx.db, runId, {
+      status: "ok",
+      usage: result.usage,
+      logPath,
+      ...(peakMemBytes !== undefined && { peakMemBytes }),
+    });
     console.log(
       `[run:${runId}] ${args.lane} ${choice.engine.id}/${choice.model}` +
         ` tokens_in=${result.usage.tokensIn ?? "?"} tokens_out=${result.usage.tokensOut ?? "?"}` +
-        ` cost=$${(result.usage.costUsd ?? 0).toFixed(4)} repo=${repo}`,
+        ` cost=$${(result.usage.costUsd ?? 0).toFixed(4)}` +
+        (peakMemBytes !== undefined ? ` peak_mem=${Math.round(peakMemBytes / 1048576)}MiB` : "") +
+        ` repo=${repo}`,
     );
     return { result, runId, choice };
   } catch (error) {
@@ -159,7 +173,12 @@ export async function runJob(ctx: SupervisorContext, args: RunJobArgs): Promise<
       error_message: message,
       duration_ms: Date.now() - new Date(timestamp).getTime(),
     });
-    finishRun(ctx.db, runId, { status: "error", error: message, logPath });
+    finishRun(ctx.db, runId, {
+      status: "error",
+      error: message,
+      logPath,
+      ...(peakMemBytes !== undefined && { peakMemBytes }),
+    });
     throw error;
   }
 }

@@ -67,6 +67,9 @@ scheduler:
   reconcile_interval: 15m   # full re-poll of every watched repo
   drain_interval: 30s       # how often workers pull from the queue
   drain_batch_size: 5       # max tasks per worker per drain tick
+  max_workers_per_repo: 1   # concurrent tasks of ONE repo (per-repo `max_workers` overrides).
+                            # Each slot is a full Claude Code session plus whatever the agent
+                            # runs; size it with `openronin runs:mem` before raising.
 
 # ── Telegram (optional) ────────────────────────────────────────────────────
 # Restrict who can DM the bot to send tasks. Empty list = anyone allowed

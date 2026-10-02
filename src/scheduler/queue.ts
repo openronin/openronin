@@ -23,17 +23,26 @@ export interface QueuedTask {
 
 const PRIORITY_RANK: Record<TaskPriority, number> = { high: 0, normal: 1, low: 2 };
 
+// Put a task (back) on the queue. A task that is RUNNING right now is not
+// flipped to pending: with several drain slots per repo another slot would
+// dequeue it and run the same task twice in parallel (two agents pushing to
+// one PR branch). Instead it gets `rerun_requested`, and markDone() re-queues
+// it once the current run finishes — so feedback that arrived mid-run is
+// still acted on, just after the run instead of alongside it.
 export function enqueue(
   db: Db,
   taskId: number,
   priority: TaskPriority = "normal",
   nextDueAt: string | null = null,
 ): void {
-  db.prepare("UPDATE tasks SET status = 'pending', priority = ?, next_due_at = ? WHERE id = ?").run(
-    priority,
-    nextDueAt,
-    taskId,
-  );
+  db.prepare(
+    `UPDATE tasks SET
+       rerun_requested = CASE WHEN status = 'running' THEN 1 ELSE rerun_requested END,
+       next_due_at = CASE WHEN status = 'running' THEN next_due_at ELSE ? END,
+       priority = ?,
+       status = CASE WHEN status = 'running' THEN 'running' ELSE 'pending' END
+     WHERE id = ?`,
+  ).run(nextDueAt, priority, taskId);
 }
 
 // Pop one due task, atomically marking it 'running'. When `opts.repoId`
@@ -64,28 +73,53 @@ export function dequeue(
       )
       .get(...(params as [string])) as QueuedTask | undefined;
     if (!row) return undefined;
-    db.prepare("UPDATE tasks SET status = 'running' WHERE id = ?").run(row.id);
+    db.prepare("UPDATE tasks SET status = 'running', rerun_requested = 0 WHERE id = ?").run(row.id);
     row.status = "running";
     return row;
   });
   return tx();
 }
 
+// Number of due pending tasks for one repo — lets the scheduler start only
+// as many parallel drain slots as there is work for.
+export function countDue(db: Db, repoId: number, now = new Date()): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM tasks
+        WHERE status = 'pending'
+          AND (next_due_at IS NULL OR next_due_at <= ?)
+          AND repo_id = ?`,
+    )
+    .get(now.toISOString(), repoId) as { n: number };
+  return row.n;
+}
+
+// Finish a run. If something asked to re-run the task while it was running
+// (see enqueue()), it goes straight back to the head of the queue instead.
 export function markDone(db: Db, taskId: number, nextDueAt: string | null): void {
   db.prepare(
-    "UPDATE tasks SET status = 'done', last_run_at = datetime('now'), next_due_at = ?, last_error = NULL WHERE id = ?",
+    `UPDATE tasks SET
+       last_run_at = datetime('now'),
+       last_error = NULL,
+       next_due_at = CASE WHEN rerun_requested = 1 THEN NULL ELSE ? END,
+       priority = CASE WHEN rerun_requested = 1 THEN 'high' ELSE priority END,
+       status = CASE WHEN rerun_requested = 1 THEN 'pending' ELSE 'done' END,
+       rerun_requested = 0
+     WHERE id = ?`,
   ).run(nextDueAt, taskId);
 }
 
 // Restore a task to pending without changing next_due_at (used when paused).
 export function requeuePaused(db: Db, taskId: number): void {
-  db.prepare("UPDATE tasks SET status = 'pending' WHERE id = ?").run(taskId);
+  db.prepare("UPDATE tasks SET status = 'pending', rerun_requested = 0 WHERE id = ?").run(taskId);
 }
 
+// A failed run keeps its retry delay even if a re-run was requested mid-run:
+// the delay may be a rate-limit cooldown that must not be skipped.
 export function markError(db: Db, taskId: number, error: string, retryInMs = 60 * 60 * 1000): void {
   const next = new Date(Date.now() + retryInMs).toISOString();
   db.prepare(
-    "UPDATE tasks SET status = 'pending', last_error = ?, next_due_at = ? WHERE id = ?",
+    "UPDATE tasks SET status = 'pending', last_error = ?, next_due_at = ?, rerun_requested = 0 WHERE id = ?",
   ).run(error, next, taskId);
 }
 

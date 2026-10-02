@@ -1,7 +1,8 @@
 import type { Db } from "../storage/db.js";
-import type { RuntimeConfig } from "../config/schema.js";
+import { maxWorkersFor, type RepoConfig, type RuntimeConfig } from "../config/schema.js";
 import { reconcileRepo, reconcileJiraTracker, type ReconcileResult } from "./reconcile.js";
 import { drainRepo, type WorkResult } from "./worker.js";
+import { countDue } from "./queue.js";
 import { ensureRepo } from "../storage/tasks.js";
 import { writeRecoveryReport } from "../storage/recovery.js";
 
@@ -9,6 +10,8 @@ export interface SchedulerOptions {
   reconcileIntervalMs: number;
   drainIntervalMs: number;
   drainBatchSize: number;
+  // Test seam: replaces the real per-repo drain. Production never sets it.
+  drainRepoFn?: typeof drainRepo;
 }
 
 export const DEFAULT_OPTIONS: SchedulerOptions = {
@@ -20,7 +23,11 @@ export const DEFAULT_OPTIONS: SchedulerOptions = {
 export interface WorkerStatus {
   repoKey: string; // "github:owner/name"
   repoId: number;
-  busy: boolean;
+  busy: boolean; // running > 0
+  running: number; // drain slots currently in flight
+  maxWorkers: number; // configured slot limit for this repo
+  // Busy: start of the OLDEST in-flight slot (what staleness is judged by).
+  // Idle: start of the most recent slot.
   lastStartedAt?: string;
   lastFinishedAt?: string;
   lastResultCount?: number;
@@ -78,6 +85,7 @@ export function recoverStuckTasks(
           SET status = 'pending',
               priority = 'high',
               next_due_at = NULL,
+              rerun_requested = 0,
               last_error = substr(
                 COALESCE(last_error || ' | ', '') || '[crash recovery: was running at shutdown]',
                 1, 1024
@@ -156,18 +164,22 @@ export function startScheduler(
 
   // Per-repo drain workers. Each watched repo gets its own logical worker
   // so a long-running task in one repo (e.g. a 5-min Claude Code call)
-  // doesn't block work in another. The actual concurrency is bounded by
-  // the number of watched repos.
+  // doesn't block work in another. Within a repo the worker runs up to
+  // maxWorkersFor(repo) drain slots in parallel (default 1). Slots can't
+  // collide: dequeue() claims a task atomically, and each task works in
+  // its own per-task clone.
+  const drainFn = opts.drainRepoFn ?? drainRepo;
   interface InternalWorker {
     repoKey: string;
     repoId: number;
-    busy: boolean;
+    slots: Map<number, string>; // slot id → startedAt (ISO)
     lastStartedAt?: string;
     lastFinishedAt?: string;
     lastResultCount?: number;
     currentTaskId?: number;
   }
   const workersByKey = new Map<string, InternalWorker>();
+  let slotCounter = 0;
 
   const repoKeyOf = (repo: { provider: string; owner: string; name: string }): string =>
     `${repo.provider}:${repo.owner}/${repo.name}`;
@@ -185,7 +197,7 @@ export function startScheduler(
         owner: repo.owner,
         name: repo.name,
       });
-      w = { repoKey: key, repoId, busy: false };
+      w = { repoKey: key, repoId, slots: new Map() };
       workersByKey.set(key, w);
     }
     return w;
@@ -232,6 +244,41 @@ export function startScheduler(
     return out;
   };
 
+  const launchSlot = (
+    worker: InternalWorker,
+    repo: RepoConfig,
+    config: RuntimeConfig,
+  ): Promise<WorkResult[]> => {
+    const slotId = ++slotCounter;
+    const startedAt = new Date().toISOString();
+    worker.slots.set(slotId, startedAt);
+    worker.lastStartedAt = startedAt;
+    const repoLabel = `${repo.owner}/${repo.name}`;
+    const promise = (async () => {
+      try {
+        return await drainFn(db, config, worker.repoId, opts.drainBatchSize);
+      } catch (error) {
+        console.error(`[scheduler] drainRepo error for ${repoLabel}:`, error);
+        return [] as WorkResult[];
+      }
+    })().finally(() => {
+      worker.slots.delete(slotId);
+      worker.lastFinishedAt = new Date().toISOString();
+      if (worker.slots.size === 0) delete worker.currentTaskId;
+    });
+    return promise.then((results) => {
+      worker.lastResultCount = results.length;
+      if (results.length > 0) {
+        console.log(
+          `[scheduler] drained ${repoLabel} ${results.length}: ${results
+            .map((r) => `#${r.taskId}=${r.status}/${r.detail ?? "?"}`)
+            .join(", ")}`,
+        );
+      }
+      return results;
+    });
+  };
+
   const tickDrain = async (): Promise<WorkResult[]> => {
     if (stopped) {
       const arr = [] as WorkResult[];
@@ -242,47 +289,28 @@ export function startScheduler(
     const watched = config.repos.filter((r) => r.watched && !r.hidden);
     if (watched.length === 0) return [];
 
-    // Fire one drain per repo in parallel, guarded by per-repo busy flag.
-    // A repo whose worker is already running skips this tick (its previous
-    // call is still grinding through batchSize tasks).
+    // Fire drains per repo in parallel. Each repo may have up to
+    // maxWorkersFor(repo) slots in flight; a repo with no free slot skips
+    // this tick (its slots are still grinding through batchSize tasks).
     const promises: Promise<WorkResult[]>[] = [];
     let allBusy = true;
     for (const repo of watched) {
       const worker = ensureWorker(repo);
-      if (worker.busy) continue;
+      const free = maxWorkersFor(repo, config.global) - worker.slots.size;
+      if (free <= 0) continue;
       allBusy = false;
-      worker.busy = true;
-      worker.lastStartedAt = new Date().toISOString();
-      const repoLabel = `${repo.owner}/${repo.name}`;
-      const promise = (async () => {
-        try {
-          return await drainRepo(db, config, worker.repoId, opts.drainBatchSize);
-        } catch (error) {
-          console.error(`[scheduler] drainRepo error for ${repoLabel}:`, error);
-          return [] as WorkResult[];
-        }
-      })().finally(() => {
-        worker.busy = false;
-        worker.lastFinishedAt = new Date().toISOString();
-        delete worker.currentTaskId;
-      });
-      promises.push(
-        promise.then((results) => {
-          worker.lastResultCount = results.length;
-          if (results.length > 0) {
-            console.log(
-              `[scheduler] drained ${repoLabel} ${results.length}: ${results
-                .map((r) => `#${r.taskId}=${r.status}/${r.detail ?? "?"}`)
-                .join(", ")}`,
-            );
-          }
-          return results;
-        }),
-      );
+      // Open extra slots only when there is queued work for them. An idle
+      // repo always gets one slot, same as the historical one-worker
+      // behaviour (a drain on an empty queue is a cheap no-op).
+      const due = countDue(db, worker.repoId);
+      const launch = Math.min(free, worker.slots.size === 0 ? Math.max(1, due) : due);
+      for (let i = 0; i < launch; i++) {
+        promises.push(launchSlot(worker, repo, config));
+      }
     }
 
     if (promises.length === 0) {
-      // Every watched repo's worker is still mid-flight from a previous tick.
+      // Every watched repo has all its slots mid-flight from previous ticks.
       const arr = [] as WorkResult[];
       (arr as WorkResult[] & { busy?: boolean }).busy = allBusy;
       return arr;
@@ -309,22 +337,31 @@ export function startScheduler(
     // show up immediately and removed ones stop appearing.
     const config = getConfig();
     const wantedKeys = new Set<string>();
+    const limits = new Map<string, number>();
     for (const repo of config.repos.filter((r) => r.watched && !r.hidden)) {
       ensureWorker(repo);
       wantedKeys.add(repoKeyOf(repo));
+      limits.set(repoKeyOf(repo), maxWorkersFor(repo, config.global));
     }
     for (const key of workersByKey.keys()) {
       if (!wantedKeys.has(key)) workersByKey.delete(key);
     }
-    return [...workersByKey.values()].map((w) => ({
-      repoKey: w.repoKey,
-      repoId: w.repoId,
-      busy: w.busy,
-      ...(w.lastStartedAt && { lastStartedAt: w.lastStartedAt }),
-      ...(w.lastFinishedAt && { lastFinishedAt: w.lastFinishedAt }),
-      ...(w.lastResultCount !== undefined && { lastResultCount: w.lastResultCount }),
-      ...(w.currentTaskId !== undefined && { currentTaskId: w.currentTaskId }),
-    }));
+    return [...workersByKey.values()].map((w) => {
+      const busy = w.slots.size > 0;
+      // ISO strings sort chronologically, so the min is the oldest slot.
+      const startedAt = busy ? [...w.slots.values()].sort()[0] : w.lastStartedAt;
+      return {
+        repoKey: w.repoKey,
+        repoId: w.repoId,
+        busy,
+        running: w.slots.size,
+        maxWorkers: limits.get(w.repoKey) ?? 1,
+        ...(startedAt && { lastStartedAt: startedAt }),
+        ...(w.lastFinishedAt && { lastFinishedAt: w.lastFinishedAt }),
+        ...(w.lastResultCount !== undefined && { lastResultCount: w.lastResultCount }),
+        ...(w.currentTaskId !== undefined && { currentTaskId: w.currentTaskId }),
+      };
+    });
   };
 
   const activeActivities = new Set<string>();
@@ -332,7 +369,7 @@ export function startScheduler(
 
   const anyWorkerBusy = (): boolean => {
     for (const w of workersByKey.values()) {
-      if (w.busy) return true;
+      if (w.slots.size > 0) return true;
     }
     if (reconcileBusy) return true;
     return activeActivities.size > 0;

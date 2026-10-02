@@ -10,7 +10,7 @@ import { getEngine, type EngineProviderId } from "../engines/index.js";
 import { runReview } from "../lanes/review.js";
 import { writeReviewReport } from "../storage/reports.js";
 import { repoKey, type RepoConfig } from "../config/schema.js";
-import { listRecentRuns } from "../storage/runs.js";
+import { getPeakMemByRepoLane, listRecentRuns } from "../storage/runs.js";
 import { reconcileRepo } from "../scheduler/reconcile.js";
 import { drain } from "../scheduler/worker.js";
 import { queueStats } from "../scheduler/queue.js";
@@ -50,6 +50,8 @@ export async function runCli(argv: string[]): Promise<CliResult> {
       return cmdPrList(args);
     case "runs:list":
       return cmdRunsList(args);
+    case "runs:mem":
+      return cmdRunsMem(args);
     case "scheduler:tick":
       return cmdSchedulerTick(args);
     case "scheduler:status":
@@ -91,6 +93,8 @@ Usage:
                                                apply changes via Claude Code, push, comment on PR
   openronin pr:list [--limit N]              Show recently created/managed PRs from the patch lane
   openronin runs:list [--limit N]            Show recent runs (engine, tokens, cost, status)
+  openronin runs:mem [--days N]              Peak memory of engine runs per repo/lane (p50/p95/max)
+                                               — use it to size max_workers_per_repo
   openronin scheduler:tick [--owner <o> --name <n>] [--drain N]
                                                Reconcile watched repos (or one) and drain N tasks
   openronin scheduler:status                 Print queue stats (pending/due/running/done/error)
@@ -317,8 +321,38 @@ function cmdRunsList(args: ParsedArgs): CliResult {
     const cost = row.cost_usd != null ? `$${row.cost_usd.toFixed(4)}` : "$-";
     const tokens = `${row.tokens_in ?? "-"}/${row.tokens_out ?? "-"}`;
     const status = row.status.padEnd(7);
+    const mem = row.peak_mem_bytes != null ? ` mem=${mib(row.peak_mem_bytes)}` : "";
     console.log(
-      `#${row.id.toString().padStart(4)} ${row.started_at} task=${row.task_id} lane=${row.lane.padEnd(8)} ${row.engine}/${row.model ?? "?"} ${status} tokens=${tokens} cost=${cost}`,
+      `#${row.id.toString().padStart(4)} ${row.started_at} task=${row.task_id} lane=${row.lane.padEnd(8)} ${row.engine}/${row.model ?? "?"} ${status} tokens=${tokens} cost=${cost}${mem}`,
+    );
+  }
+  return { exitCode: 0 };
+}
+
+function mib(bytes: number): string {
+  return `${Math.round(bytes / 1048576)}MiB`;
+}
+
+function cmdRunsMem(args: ParsedArgs): CliResult {
+  const days = Number(args.string("days", "7"));
+  const config = loadConfig();
+  const db = initDb(config.dataDir);
+  // runs.started_at is SQLite's "YYYY-MM-DD HH:MM:SS" (UTC); match that
+  // shape so the string comparison is exact on the boundary day.
+  const since = new Date(Date.now() - days * 86_400_000)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
+  const groups = getPeakMemByRepoLane(db, since);
+  if (groups.length === 0) {
+    console.log(`No runs with recorded peak memory in the last ${days} day(s).`);
+    return { exitCode: 0 };
+  }
+  console.log(`Peak memory of engine process trees (PSS), last ${days} day(s):`);
+  for (const g of groups) {
+    console.log(
+      `${g.repo.padEnd(40)} lane=${g.lane.padEnd(12)} runs=${String(g.runs).padStart(4)}` +
+        ` p50=${mib(g.p50).padStart(8)} p95=${mib(g.p95).padStart(8)} max=${mib(g.max).padStart(8)}`,
     );
   }
   return { exitCode: 0 };

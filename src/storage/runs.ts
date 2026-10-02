@@ -16,6 +16,7 @@ export interface RunRow {
   error: string | null;
   log_path: string | null;
   prompt_log_path: string | null;
+  peak_mem_bytes: number | null;
 }
 
 export function createRun(
@@ -34,6 +35,7 @@ export interface FinishArgs {
   error?: string;
   logPath?: string;
   promptLogPath?: string;
+  peakMemBytes?: number;
 }
 
 export function finishRun(db: Db, runId: number, args: FinishArgs): void {
@@ -46,7 +48,8 @@ export function finishRun(db: Db, runId: number, args: FinishArgs): void {
        status = ?,
        error = ?,
        log_path = ?,
-       prompt_log_path = ?
+       prompt_log_path = ?,
+       peak_mem_bytes = ?
      WHERE id = ?`,
   ).run(
     args.usage?.tokensIn ?? null,
@@ -56,6 +59,7 @@ export function finishRun(db: Db, runId: number, args: FinishArgs): void {
     args.error ?? null,
     args.logPath ?? null,
     args.promptLogPath ?? null,
+    args.peakMemBytes ?? null,
     runId,
   );
 }
@@ -121,6 +125,59 @@ export function getCostGroupedByRepo(db: Db, sinceIso: string): CostGroup[] {
        GROUP BY r.id ORDER BY cost DESC`,
     )
     .all(sinceIso) as CostGroup[];
+}
+
+export interface PeakMemGroup {
+  repo: string;
+  lane: string;
+  runs: number; // runs that recorded a peak
+  p50: number; // bytes
+  p95: number;
+  max: number;
+}
+
+// Nearest-rank percentile over an ascending-sorted, non-empty array.
+function percentile(sorted: number[], p: number): number {
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[idx]!;
+}
+
+// Peak engine-tree memory per repo × lane since `sinceIso`. Runs without a
+// recorded peak (non-spawning engines, pre-v22 rows) are ignored. Sorted by
+// max desc — the heaviest workload is what sizes the host.
+export function getPeakMemByRepoLane(db: Db, sinceIso: string): PeakMemGroup[] {
+  const rows = db
+    .prepare(
+      `SELECT r.owner || '/' || r.name AS repo, ru.lane AS lane, ru.peak_mem_bytes AS bytes
+       FROM runs ru
+       JOIN tasks t ON t.id = ru.task_id
+       JOIN repos r ON r.id = t.repo_id
+       WHERE ru.started_at >= ? AND ru.peak_mem_bytes IS NOT NULL`,
+    )
+    .all(sinceIso) as { repo: string; lane: string; bytes: number }[];
+  const groups = new Map<string, { repo: string; lane: string; values: number[] }>();
+  for (const row of rows) {
+    const key = `${row.repo}\0${row.lane}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = { repo: row.repo, lane: row.lane, values: [] };
+      groups.set(key, g);
+    }
+    g.values.push(row.bytes);
+  }
+  return [...groups.values()]
+    .map((g) => {
+      const sorted = g.values.sort((a, b) => a - b);
+      return {
+        repo: g.repo,
+        lane: g.lane,
+        runs: sorted.length,
+        p50: percentile(sorted, 50),
+        p95: percentile(sorted, 95),
+        max: sorted[sorted.length - 1]!,
+      };
+    })
+    .sort((a, b) => b.max - a.max);
 }
 
 export interface TasksPerDay {

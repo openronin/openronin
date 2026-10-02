@@ -328,6 +328,6 @@ function findRepo(config: RuntimeConfig, task: QueuedTask): RepoConfig | undefin
 
 function enqueueImmediate(db: Db, taskId: number): void {
   db.prepare(
-    "UPDATE tasks SET status = 'pending', priority = 'high', next_due_at = NULL WHERE id = ?",
+    "UPDATE tasks SET status = 'pending', priority = 'high', next_due_at = NULL, rerun_requested = 0 WHERE id = ?",
   ).run(taskId);
 }

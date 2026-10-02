@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { Engine, EngineResult, EngineRunOptions } from "./types.js";
 import { RateLimited } from "./types.js";
+import { startPeakMemorySampler } from "../lib/proc-mem.js";
 
 interface ClaudeCodeEngineOptions {
   binary?: string;
@@ -70,6 +71,7 @@ export class ClaudeCodeEngine implements Engine {
       input: opts.userPrompt,
       cwd: opts.workdir,
       timeoutMs: opts.timeoutMs,
+      onPeakMemory: opts.onPeakMemory,
     });
 
     if (code !== 0) {
@@ -223,6 +225,7 @@ interface RunProcessOptions {
   input?: string;
   cwd?: string;
   timeoutMs?: number;
+  onPeakMemory?: (bytes: number) => void;
 }
 
 function runProcess(bin: string, args: string[], opts: RunProcessOptions): Promise<ProcessResult> {
@@ -231,6 +234,12 @@ function runProcess(bin: string, args: string[], opts: RunProcessOptions): Promi
     let stdout = "";
     let stderr = "";
     let timer: NodeJS.Timeout | undefined;
+    const sampler =
+      opts.onPeakMemory && child.pid !== undefined ? startPeakMemorySampler(child.pid) : undefined;
+    const reportPeak = () => {
+      const peak = sampler?.stop();
+      if (peak !== undefined) opts.onPeakMemory?.(peak);
+    };
 
     if (opts.timeoutMs && opts.timeoutMs > 0) {
       timer = setTimeout(() => {
@@ -249,10 +258,12 @@ function runProcess(bin: string, args: string[], opts: RunProcessOptions): Promi
     });
     child.on("error", (error) => {
       if (timer) clearTimeout(timer);
+      reportPeak();
       reject(error);
     });
     child.on("close", (code) => {
       if (timer) clearTimeout(timer);
+      reportPeak();
       resolve({ stdout, stderr, code });
     });
 

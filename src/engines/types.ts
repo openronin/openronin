@@ -16,6 +16,11 @@ export interface EngineRunOptions {
   model?: string;
   expectJson?: boolean;
   maxBudgetUsd?: number;
+  // Called once per spawned engine process (success or failure) with the
+  // peak memory of its process tree in bytes. Only engines that spawn a
+  // local process report it; a run may report several times (multi-agent),
+  // callers keep the maximum.
+  onPeakMemory?: (bytes: number) => void;
 }
 
 export interface EngineUsage {
