@@ -38,9 +38,9 @@ test("selectEngine: precedence cli_override > repo_override > global_default", a
   assert.equal(choice2.source, "repo_override");
 
   // CLI override beats repo
-  const choice3 = selectEngine(ctxWith, "triage", { engine: "mimo", model: "mimo-v2.5" });
+  const choice3 = selectEngine(ctxWith, "triage", { engine: "mimo", model: "mimo-v2.6-flash" });
   assert.equal(choice3.engine.id, "mimo");
-  assert.equal(choice3.model, "mimo-v2.5");
+  assert.equal(choice3.model, "mimo-v2.6-flash");
   assert.equal(choice3.source, "cli_override");
 });
 
@@ -84,7 +84,7 @@ test("runJob records a successful run with usage in DB", async () => {
     // Substitute the engines factory by re-importing index after setting env? Cleaner:
     // call createRun + finishRun directly to verify storage layer round-trip.
     const { createRun, finishRun } = await import("../dist/storage/runs.js");
-    const runId = createRun(db, { taskId, lane: "review", engine: "mimo", model: "mimo-v2.5" });
+    const runId = createRun(db, { taskId, lane: "review", engine: "mimo", model: "mimo-v2.6-flash" });
 
     const result = await fakeEngine.run({
       systemPrompt: "s",

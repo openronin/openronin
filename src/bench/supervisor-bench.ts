@@ -10,7 +10,7 @@ import type { TriageFixture, AnalyzeFixture } from "./fixtures.js";
 
 // Per-token pricing (USD). null = unknown.
 const MODEL_PRICING: Record<string, { input: number; output: number } | null> = {
-  "mimo-v2.5": null,
+  "mimo-v2.6-flash": null,
   "claude-haiku-4-5-20251001": { input: 0.8 / 1_000_000, output: 4 / 1_000_000 },
   "claude-sonnet-4-6": { input: 3 / 1_000_000, output: 15 / 1_000_000 },
 };
@@ -49,7 +49,7 @@ function parseArgs(): {
   timeoutMs: number;
 } {
   const args = process.argv.slice(2);
-  let models = ["mimo-v2.5", "claude-haiku-4-5-20251001"];
+  let models = ["mimo-v2.6-flash", "claude-haiku-4-5-20251001"];
   let lane: "triage" | "analyze" | "all" = "all";
   let outputDir = "./bench-results";
   let timeoutMs = 30_000;
@@ -70,11 +70,11 @@ function parseArgs(): {
 }
 
 function buildModelConfig(modelId: string): ModelConfig {
-  if (modelId === "mimo-v2.5") {
+  if (modelId === "mimo-v2.6-flash") {
     return {
-      engine: new MimoEngine({ defaultModel: "mimo-v2.5" }),
+      engine: new MimoEngine({ defaultModel: "mimo-v2.6-flash" }),
       modelId,
-      label: "mimo-v2.5",
+      label: "mimo-v2.6-flash",
     };
   }
   if (modelId.startsWith("claude-")) {
@@ -85,7 +85,7 @@ function buildModelConfig(modelId: string): ModelConfig {
     };
   }
   throw new Error(
-    `Unknown model: ${modelId}. Supported: mimo-v2.5, claude-haiku-4-5-20251001, claude-sonnet-4-6`,
+    `Unknown model: ${modelId}. Supported: mimo-v2.6-flash, claude-haiku-4-5-20251001, claude-sonnet-4-6`,
   );
 }
 
@@ -370,7 +370,7 @@ function buildRecommendation(
   const haikuAnalyzeAcc = analyze.find((s) => s.model.includes("haiku"))?.accuracy ?? null;
 
   if (mimoTriageAcc === null || haikuTriageAcc === null) {
-    return "Run with both `mimo-v2.5` and `claude-haiku-4-5-20251001` for a full comparison.";
+    return "Run with both `mimo-v2.6-flash` and `claude-haiku-4-5-20251001` for a full comparison.";
   }
 
   const triageDelta = Math.abs(haikuTriageAcc - mimoTriageAcc);
@@ -407,7 +407,7 @@ function buildRecommendation(
     return `Haiku outperforms MIMO by more than 5%. **Consider switching to claude-haiku-4-5-20251001.**`;
   }
   if (!withinThreshold && mimoTriageAcc > haikuTriageAcc) {
-    return `MIMO outperforms Haiku by more than 5%. **Keep mimo-v2.5 as the default supervisor engine.**`;
+    return `MIMO outperforms Haiku by more than 5%. **Keep mimo-v2.6-flash as the default supervisor engine.**`;
   }
   return `Results are within ±5% accuracy. The choice between models depends on cost constraints and latency requirements.`;
 }

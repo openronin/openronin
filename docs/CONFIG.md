@@ -47,8 +47,8 @@ server:
 
 engines:
   defaults:
-    triage:      { provider: mimo, model: mimo-v2.5-pro }
-    analyze:     { provider: mimo, model: mimo-v2.5-pro }
+    triage:      { provider: mimo, model: mimo-v2.6-pro }
+    analyze:     { provider: mimo, model: mimo-v2.6-pro }
     deep_review: { provider: claude_code, model: sonnet }
     patch:       { provider: claude_code, model: sonnet }
     pr_dialog:   { provider: claude_code, model: sonnet }
@@ -106,7 +106,7 @@ cadence:
 
 # Per-job-type engine overrides. Omitted = use global default.
 engine_overrides:
-  triage: { provider: mimo, model: mimo-v2.5-pro }
+  triage: { provider: mimo, model: mimo-v2.6-pro }
   patch: { provider: claude_code, model: sonnet }
 
 # Per-job-type prompt overrides. Path is relative to $OPENRONIN_DATA_DIR/prompts/

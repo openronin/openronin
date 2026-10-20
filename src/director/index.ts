@@ -183,7 +183,7 @@ async function maybeRunDigest(db: Db, target: RepoLookup, dataDir: string): Prom
       // pricier engine would defeat the point of the daily digest.
       engineFactory: () =>
         new MimoEngine({
-          defaultModel: process.env.OPENRONIN_DIRECTOR_DIGEST_MODEL ?? "mimo-v2.5-pro",
+          defaultModel: process.env.OPENRONIN_DIRECTOR_DIGEST_MODEL ?? "mimo-v2.6-pro",
         }),
     });
     // eslint-disable-next-line no-console

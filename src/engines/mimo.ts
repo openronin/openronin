@@ -74,7 +74,7 @@ export class MimoEngine implements Engine {
     }
     this.apiKey = apiKey;
     this.baseUrl = baseUrl.replace(/\/+$/, "");
-    this.defaultModel = options.defaultModel ?? "mimo-v2.5-pro";
+    this.defaultModel = options.defaultModel ?? "mimo-v2.6-pro";
     this.fetchImpl = options.fetch ?? fetch;
   }
 
