@@ -180,7 +180,7 @@ export async function runSlashCommand(opts: {
           dataDir: opts.dataDir,
           engineFactory: () =>
             new MimoEngine({
-              defaultModel: process.env.OPENRONIN_DIRECTOR_DIGEST_MODEL ?? "mimo-v2.5-pro",
+              defaultModel: process.env.OPENRONIN_DIRECTOR_DIGEST_MODEL ?? "mimo-v2.6-pro",
             }),
         });
         return { echo: `digest ran: ${result.detail}` };

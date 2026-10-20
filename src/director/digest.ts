@@ -257,7 +257,7 @@ export async function runDigest(opts: DigestRunOptions): Promise<DigestRunResult
         body:
           `digest unavailable: ${detail}. ` +
           `Configured digest model is not supported by MIMO — set OPENRONIN_DIRECTOR_DIGEST_MODEL ` +
-          `to a valid model (e.g. mimo-v2.5-pro). Skipping digest for ${today}.`,
+          `to a valid model (e.g. mimo-v2.6-pro). Skipping digest for ${today}.`,
         metadata: {
           repo: repoKey(repo),
           kind: "digest",
