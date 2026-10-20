@@ -6,8 +6,8 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ### Fixed — default MIMO model moved off retired `mimo-v2.5*`
 
-- **Xiaomi retires MiMo-V2.5 and MiMo-V2.5-Pro on 2026-10-21.** Every built-in default that pointed at `mimo-v2.5-pro` now points at `mimo-v2.6-pro`: the `triage` / `analyze` schema defaults, `MimoEngine`'s default model, the Director think-engine and digest defaults. Without this, a deployment that relies on defaults (no explicit `engines.defaults.triage` in YAML, unset `OPENRONIN_DIRECTOR_DIGEST_MODEL`) starts failing on every supervisor call after the cutoff.
-- Examples and docs (`config/openronin.example.yaml`, `.env.example`, `docs/CONFIG.md`, `docs/DIRECTOR.md`) and the supervisor bench model list follow; `mimo-v2.5-flash` examples become `mimo-v2.6-flash`.
+- **Xiaomi retires MiMo-V2.5 and MiMo-V2.5-Pro on 2026-10-21 10:00 UTC+8** ([deprecation notice](https://mimo.mi.com/docs/en-US/updates/deprecate)); after that, requests naming the old models get an error. Following the vendor's mapping (`mimo-v2.5-pro` → `mimo-v2.6-pro`, `mimo-v2.5` → `mimo-v2.6-flash`), every built-in default that pointed at `mimo-v2.5-pro` now points at `mimo-v2.6-pro`: the `triage` / `analyze` schema defaults, `MimoEngine`'s default model, the Director think-engine and digest defaults. Without this, a deployment that relies on defaults (no explicit `engines.defaults.triage` in YAML, unset `OPENRONIN_DIRECTOR_DIGEST_MODEL`) starts failing on every supervisor call after the cutoff.
+- Examples and docs (`config/openronin.example.yaml`, `.env.example`, `docs/CONFIG.md`, `docs/DIRECTOR.md`) follow. Plain `mimo-v2.5` (supervisor bench, `engine:test` help example, tests) becomes `mimo-v2.6-flash`, as do the `mimo-v2.5-flash` examples.
 - **Not changed:** `MIMO_PRICING` in `src/engines/mimo.ts` still carries the V2.5 rates, so `costUsd` for V2.6 runs is an estimate until official V2.6 rates are wired in.
 - Operators who pinned `mimo-v2.5*` explicitly in YAML or env must update it themselves.
 

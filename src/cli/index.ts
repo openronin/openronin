@@ -126,7 +126,7 @@ engines:
   defaults:
     triage:
       provider: mimo
-      model: mimo-v2.6-pro
+      model: mimo-v2.6-flash
     deep_review:
       provider: claude_code
       model: sonnet
