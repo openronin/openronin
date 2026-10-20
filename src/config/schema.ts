@@ -23,8 +23,8 @@ export const EngineRefSchema = z.object({
 // Job-type defaults — used by supervisor when a per-repo override is absent
 export const EngineDefaultsSchema = z
   .object({
-    triage: EngineRefSchema.default({ provider: "mimo", model: "mimo-v2.5-pro" }),
-    analyze: EngineRefSchema.default({ provider: "mimo", model: "mimo-v2.5-pro" }),
+    triage: EngineRefSchema.default({ provider: "mimo", model: "mimo-v2.6-pro" }),
+    analyze: EngineRefSchema.default({ provider: "mimo", model: "mimo-v2.6-pro" }),
     deep_review: EngineRefSchema.default({ provider: "claude_code", model: "sonnet" }),
     patch: EngineRefSchema.default({ provider: "claude_code", model: "sonnet" }),
     pr_dialog: EngineRefSchema.default({ provider: "claude_code", model: "sonnet" }),
