@@ -188,7 +188,7 @@ The mode itself is never mutated programmatically — the message tells the oper
 
 ## Engine split (chat-vs-plan)
 
-Reactive ticks (chat directives, `reason='user_message'`) prefer MIMO; scheduled cadence ticks prefer Anthropic Sonnet. Same `selectThinkEngine` function with a `preferCheap` flag. Result: a chat reply costs ~$0.001 instead of ~$0.05 and lands faster. Override via `OPENRONIN_DIRECTOR_THINK_ENGINE=anthropic` (forces heavy regardless) or `OPENRONIN_DIRECTOR_CHAT_MODEL` (pin a specific MIMO variant for chat replies, e.g. `mimo-v2.5-flash`).
+Reactive ticks (chat directives, `reason='user_message'`) prefer MIMO; scheduled cadence ticks prefer Anthropic Sonnet. Same `selectThinkEngine` function with a `preferCheap` flag. Result: a chat reply costs ~$0.001 instead of ~$0.05 and lands faster. Override via `OPENRONIN_DIRECTOR_THINK_ENGINE=anthropic` (forces heavy regardless) or `OPENRONIN_DIRECTOR_CHAT_MODEL` (pin a specific MIMO variant for chat replies, e.g. `mimo-v2.6-flash`).
 
 ## Standing operator notes
 

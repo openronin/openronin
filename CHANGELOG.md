@@ -4,6 +4,13 @@ All notable changes to **openronin** are documented here. The format follows [Ke
 
 ## [Unreleased]
 
+### Fixed — default MIMO model moved off retired `mimo-v2.5*`
+
+- **Xiaomi retires MiMo-V2.5 and MiMo-V2.5-Pro on 2026-10-21.** Every built-in default that pointed at `mimo-v2.5-pro` now points at `mimo-v2.6-pro`: the `triage` / `analyze` schema defaults, `MimoEngine`'s default model, the Director think-engine and digest defaults. Without this, a deployment that relies on defaults (no explicit `engines.defaults.triage` in YAML, unset `OPENRONIN_DIRECTOR_DIGEST_MODEL`) starts failing on every supervisor call after the cutoff.
+- Examples and docs (`config/openronin.example.yaml`, `.env.example`, `docs/CONFIG.md`, `docs/DIRECTOR.md`) and the supervisor bench model list follow; `mimo-v2.5-flash` examples become `mimo-v2.6-flash`.
+- **Not changed:** `MIMO_PRICING` in `src/engines/mimo.ts` still carries the V2.5 rates, so `costUsd` for V2.6 runs is an estimate until official V2.6 rates are wired in.
+- Operators who pinned `mimo-v2.5*` explicitly in YAML or env must update it themselves.
+
 ### Added — soft-untrack + purge repo lifecycle (issue #104)
 
 - **Two-stage repo removal from the admin UI.** *Untrack* (soft-hide) on `/admin/repos` flips `hidden: true` in the per-repo YAML after the operator types the exact `owner/name` slug; the repo disappears from the main UI and every subsystem stops touching it (scheduler / reconcile / worker / webhooks / Director all skip hidden repos). *Purge* on `/admin/settings/hidden` is irreversible: it requires re-typing the admin Basic-auth credentials (constant-time compared), then deletes the DB row (cascading via FK to tasks / runs / pr_branches / deploys / webhook_secrets / director_*), the per-repo YAML config, the working tree under `work/`, reports, and JSONL run logs, and best-effort removes the webhook on the VCS side.

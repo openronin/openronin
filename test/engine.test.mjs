@@ -36,7 +36,7 @@ test("MimoEngine: success path with mocked fetch returns content + usage", async
   assert.equal(result.finishReason, "stop");
   assert.equal(captured.url, "https://example.test/v1/chat/completions");
   const body = JSON.parse(captured.init.body);
-  assert.equal(body.model, "mimo-v2.5-pro");
+  assert.equal(body.model, "mimo-v2.6-pro");
   assert.equal(body.messages.length, 2);
   assert.equal(body.messages[0].role, "system");
 });

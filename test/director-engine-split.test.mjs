@@ -63,11 +63,11 @@ test("selectThinkEngine: preferCheap honours OPENRONIN_DIRECTOR_CHAT_MODEL", () 
       ANTHROPIC_API_KEY: "sk-test",
       XIAOMI_MIMO_API_KEY: "mimo-test",
       OPENRONIN_DIRECTOR_THINK_ENGINE: undefined,
-      OPENRONIN_DIRECTOR_CHAT_MODEL: "mimo-v2.5-flash",
+      OPENRONIN_DIRECTOR_CHAT_MODEL: "mimo-v2.6-flash",
     },
     () => {
       const { model } = selectThinkEngine({ preferCheap: true });
-      assert.equal(model, "mimo-v2.5-flash");
+      assert.equal(model, "mimo-v2.6-flash");
     },
   );
 });

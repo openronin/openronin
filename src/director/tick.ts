@@ -45,7 +45,7 @@ import { PersonaSchema, type DecisionType, type DirectorConfig } from "./types.j
 import YAML from "yaml";
 
 const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
-const DEFAULT_MIMO_MODEL = "mimo-v2.5-pro";
+const DEFAULT_MIMO_MODEL = "mimo-v2.6-pro";
 const TICK_TIMEOUT_MS = 120_000; // 2 min — generous for a 30k-token thinking call
 
 // Why the tick is firing right now. The Director used to wake up only on
