@@ -49,27 +49,14 @@ export class ClaudeCodeEngine implements Engine {
 
   async run(opts: EngineRunOptions): Promise<EngineResult> {
     const model = opts.model ?? this.defaultModel;
-    const args = [
-      "--print",
-      "--model",
-      model,
-      "--output-format",
-      "json",
-      "--permission-mode",
-      mapPermission(opts.tools ?? "read-only"),
-    ];
-    if (opts.maxBudgetUsd && opts.maxBudgetUsd > 0) {
-      args.push("--max-budget-usd", String(opts.maxBudgetUsd));
-    }
-    if (opts.systemPrompt) {
-      args.push("--append-system-prompt", opts.systemPrompt);
-    }
+    const args = buildClaudeArgs(model, opts);
 
     const started = Date.now();
     const { stdout, stderr, code } = await runProcess(this.binary, args, {
       input: opts.userPrompt,
       cwd: opts.workdir,
       timeoutMs: opts.timeoutMs,
+      env: buildClaudeEnv(process.env),
     });
 
     if (code !== 0) {
@@ -188,6 +175,45 @@ export function extractDeniedBashCommands(raw: unknown): string[] {
   return out;
 }
 
+// Tools that make a headless (`--print`) run outlive its own answer.
+//
+// `--print` does not exit while a background task is still pending. A
+// `Monitor` armed with a 10-minute timeout ("wait for phpunit to finish")
+// keeps the process alive after the agent has already committed and written
+// its final answer; every expiry wakes the agent for one more no-op turn.
+// Production runs lost 8-10 minutes per task this way between the commit and
+// the push. Nobody watches a headless run, so nothing is lost by refusing it.
+export const HEADLESS_DISALLOWED_TOOLS = ["Monitor"];
+
+// Without background tasks the agent runs tests in the foreground (with a
+// timeout) instead of backgrounding them and polling for completion.
+export const HEADLESS_ENV = { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" };
+
+export function buildClaudeArgs(model: string, opts: EngineRunOptions): string[] {
+  const args = [
+    "--print",
+    "--model",
+    model,
+    "--output-format",
+    "json",
+    "--permission-mode",
+    mapPermission(opts.tools ?? "read-only"),
+    "--disallowedTools",
+    HEADLESS_DISALLOWED_TOOLS.join(","),
+  ];
+  if (opts.maxBudgetUsd && opts.maxBudgetUsd > 0) {
+    args.push("--max-budget-usd", String(opts.maxBudgetUsd));
+  }
+  if (opts.systemPrompt) {
+    args.push("--append-system-prompt", opts.systemPrompt);
+  }
+  return args;
+}
+
+export function buildClaudeEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...base, ...HEADLESS_ENV };
+}
+
 // Map the engine-level `tools` policy to Claude Code's `--permission-mode` flag.
 //
 // `acceptEdits` only auto-approves the Edit/Write tool calls. The Bash tool
@@ -223,11 +249,16 @@ interface RunProcessOptions {
   input?: string;
   cwd?: string;
   timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
 }
 
 function runProcess(bin: string, args: string[], opts: RunProcessOptions): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { cwd: opts.cwd, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(bin, args, {
+      cwd: opts.cwd,
+      env: opts.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     let timer: NodeJS.Timeout | undefined;
